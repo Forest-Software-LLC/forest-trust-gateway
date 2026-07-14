@@ -1,0 +1,32 @@
+{
+  "name": "forest-trust-gateway",
+  "version": "0.1.0",
+  "description": "Public, independently buildable service handling Forest package publish and download. Verifies and hashes packages itself using its own public trust rules (src/rules/); everything else (who's allowed to do what, what a license means) is a fact fetched from the private forest-backend over an internal API, never a database it holds itself.",
+  "private": true,
+  "main": "dist/server.js",
+  "license": "MIT",
+  "scripts": {
+    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:worker": "tsc -p tsconfig.worker.json",
+    "build": "npm run build:backend && npm run build:worker",
+    "dev": "node --experimental-strip-types src/server.ts",
+    "deploy": "wrangler deploy",
+    "test": "node --experimental-strip-types --test",
+    "cf-typegen": "wrangler types --include-runtime=false src/types/worker-configuration.d.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.777.0",
+    "@cloudflare/containers": "^0.3.7",
+    "@fastify/multipart": "^9.0.3",
+    "fastify": "^5.2.2",
+    "tar-stream": "^3.1.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260714.1",
+    "@types/node": "^20.0.0",
+    "@types/tar-stream": "^3.1.3",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.110.0"
+  }
+}

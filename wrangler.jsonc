@@ -1,0 +1,53 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "forest-trust-gateway",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-05-23",
+	"compatibility_flags": [
+		"nodejs_compat",
+		// Required for the container's outboundByHost mechanism: the
+		// @cloudflare/containers runtime proxies container-originated
+		// requests back through Worker bindings via ctx.exports.ContainerProxy.
+		"enable_ctx_exports"
+	],
+	"observability": {
+		"enabled": true
+	},
+	"containers": [
+		{
+			"class_name": "GatewayContainer",
+			"image": "./Dockerfile",
+			"max_instances": 20
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "GatewayContainer",
+				"name": "GATEWAY_CONTAINER"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"new_sqlite_classes": [
+				"GatewayContainer"
+			],
+			"tag": "v1"
+		}
+	],
+	// Worker-to-Worker RPC to forest-api's internal-only routes. Cloudflare
+	// routes this account-internally — it never touches the public internet,
+	// regardless of what forest-api's own Container/Durable Object setup is.
+	// This is the ONLY way this service ever talks to forest-backend.
+	"services": [
+		{
+			"binding": "FOREST_API",
+			"service": "forest-api"
+		}
+	]
+}
