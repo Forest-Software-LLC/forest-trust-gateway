@@ -14,6 +14,7 @@ import type {
 */
 export class MockInternalApiClient implements InternalApiClient {
     public recordedCalls: RecordPublishedVersionInput[] = [];
+    public recordedAuthHeaders: (string | undefined)[] = [];
     public verifyLicenseCalls: { scope: string; name: string; declaredLicense: string; licenseText: string | undefined; isPublic: boolean }[] = [];
     private publishFacts: PublishAuthorizationFacts;
     private accessFacts: AccessFacts;
@@ -34,8 +35,9 @@ export class MockInternalApiClient implements InternalApiClient {
         return this.licenseVerdict;
     }
 
-    async recordPublishedVersion(input: RecordPublishedVersionInput): Promise<void> {
+    async recordPublishedVersion(input: RecordPublishedVersionInput, authorizationHeader?: string): Promise<void> {
         this.recordedCalls.push(input);
+        this.recordedAuthHeaders.push(authorizationHeader);
     }
 
     async getAccessFacts(): Promise<AccessFacts> {

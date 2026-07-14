@@ -210,7 +210,7 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
                     [k, typeof v === 'string' ? { version: v, alias: k } : v]
                 )
             ),
-        });
+        }, request.headers.authorization);
 
         return reply.status(200).send({ version: forestJson.version, hash: hashResult.hash });
     });

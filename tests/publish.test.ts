@@ -332,3 +332,31 @@ test('a file that exceeds the multipart fileSize limit is rejected as truncated,
     assert.equal(puts.length, 0);
     assert.equal(client.recordedCalls.length, 0);
 });
+
+test('the Authorization header is forwarded on the record-published-version call', async () => {
+    // The backend resolves the publishing author from the caller's identity,
+    // so recording a version without the caller's Authorization header fails
+    // with a 401 — after the file is already stored. Nothing else in this
+    // suite notices a dropped header (the mock doesn't enforce auth), so
+    // this pins the forwarding explicitly.
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer forwarded-token' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(client.recordedAuthHeaders, ['Bearer forwarded-token']);
+});

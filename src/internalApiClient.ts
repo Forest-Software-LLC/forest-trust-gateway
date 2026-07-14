@@ -105,7 +105,9 @@ export interface InternalApiClient {
         isPublic: boolean;
     }): Promise<LicenseVerdict>;
 
-    recordPublishedVersion(input: RecordPublishedVersionInput): Promise<void>;
+    // The backend resolves the publishing author from the caller's identity,
+    // so the Authorization header must be forwarded here too.
+    recordPublishedVersion(input: RecordPublishedVersionInput, authorizationHeader?: string): Promise<void>;
 
     getAccessFacts(params: {
         authorizationHeader?: string;
@@ -168,8 +170,8 @@ export class BackendInternalApiClient implements InternalApiClient {
         }) as Promise<LicenseVerdict>;
     }
 
-    async recordPublishedVersion(input: RecordPublishedVersionInput) {
-        await this.postOrGet('POST', '/internal/record-published-version', input);
+    async recordPublishedVersion(input: RecordPublishedVersionInput, authorizationHeader?: string) {
+        await this.postOrGet('POST', '/internal/record-published-version', input, authorizationHeader);
     }
 
     async getAccessFacts(params: { authorizationHeader?: string; scope: string; name: string; platform: string; version?: string }) {
