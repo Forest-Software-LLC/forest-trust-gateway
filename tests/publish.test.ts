@@ -360,3 +360,31 @@ test('the Authorization header is forwarded on the record-published-version call
     assert.equal(res.statusCode, 200);
     assert.deepEqual(client.recordedAuthHeaders, ['Bearer forwarded-token']);
 });
+
+test('the requested visibility is forwarded on the publish-authorization call', async () => {
+    // The backend gates private publishes behind a Pro subscription using
+    // this flag — dropping it would silently bypass the gate (the backend
+    // schema requires it, so a drop fails loudly there, but this pins the
+    // gateway side too).
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: false }) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(client.publishAuthorizationCalls.length, 1);
+    assert.equal(client.publishAuthorizationCalls[0].isPublic, false);
+});

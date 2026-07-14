@@ -112,6 +112,7 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             scope: forestJson.author,
             name: forestJson.name,
             platform: forestJson.platform,
+            isPublic: metadata.public === true,
         });
 
         if (!facts.authenticated) {

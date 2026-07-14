@@ -95,6 +95,9 @@ export interface InternalApiClient {
         scope: string;
         name: string;
         platform: string;
+        // The requested visibility — the backend gates private publishes
+        // behind a Pro subscription (surfaced via blockedReason).
+        isPublic: boolean;
     }): Promise<PublishAuthorizationFacts>;
 
     verifyLicense(params: {
@@ -152,11 +155,12 @@ export class BackendInternalApiClient implements InternalApiClient {
         return res.json();
     }
 
-    async getPublishAuthorization(params: { authorizationHeader?: string; scope: string; name: string; platform: string }) {
+    async getPublishAuthorization(params: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean }) {
         return this.postOrGet('POST', '/internal/publish-authorization', {
             scope: params.scope,
             name: params.name,
             platform: params.platform,
+            isPublic: params.isPublic,
         }, params.authorizationHeader) as Promise<PublishAuthorizationFacts>;
     }
 
