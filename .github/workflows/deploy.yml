@@ -47,9 +47,13 @@ jobs:
         run: |
           set -euo pipefail
           npx wrangler deploy 2>&1 | tee deploy.log
-          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' deploy.log | head -1)
+          # Anchor on the docker push result line ("<tag>: digest: sha256:<hex> size: <n>").
+          # A bare sha256 grep is NOT safe here: the first sha256 in wrangler's
+          # output is the base image's digest from the Dockerfile FROM
+          # resolution, which is exactly the wrong thing to attest.
+          DIGEST=$(grep -oE 'digest: sha256:[a-f0-9]{64}' deploy.log | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
           if [ -z "$DIGEST" ]; then
-            echo "::warning::No image digest found in wrangler output; skipping attestation"
+            echo "::warning::No pushed-image digest found in wrangler output; skipping attestation"
           fi
           echo "IMAGE_DIGEST=$DIGEST" >> "$GITHUB_ENV"
 
