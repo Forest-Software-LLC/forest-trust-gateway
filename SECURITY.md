@@ -21,12 +21,13 @@ Upload and download are served at `packages.forest.dev` by this codebase. File b
 Deploys happen exclusively from this repo's `main` branch via [GitHub Actions](.github/workflows/deploy.yml). The workflow builds the container image, deploys it, and attests the image digest with GitHub build provenance.
 
 **Verify:**
-- The Actions logs for every deploy are public.
-- Verify the deployed image digest against the attestation:
+- The Actions logs for every deploy are public; each log prints the pushed image digest.
+- Fetch the signed provenance for that digest and check what it binds together (image digest ↔ commit ↔ this repo's deploy workflow):
   ```sh
-  gh attestation verify oci://registry.cloudflare.com/<account>/forest-trust-gateway-gatewaycontainer@sha256:<digest> --repo forest-software-llc/forest-trust-gateway
+  gh api repos/Forest-Software-LLC/forest-trust-gateway/attestations/sha256:<digest> \
+    --jq '.attestations[0].bundle.dsseEnvelope.payload' | base64 -d | jq '{subject, workflow: .predicate.buildDefinition.externalParameters.workflow, commit: .predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit}'
   ```
-  (The digest for each deploy is printed in that deploy's public Actions log.)
+  (The container registry itself is account-private, so `gh attestation verify oci://…` won't work from outside; the attestation bundle above is the same signed Sigstore evidence, fetched from GitHub instead of the registry.)
 - `main` is branch-protected: no force pushes, CI must pass.
 
 ### 4. The rules are testable offline
@@ -47,4 +48,4 @@ The design goal is that the worst a fully compromised private backend can do is 
 
 ## Reporting a vulnerability
 
-Email **hi@forestpm.dev**. Please do not open public issues for exploitable vulnerabilities; we'll coordinate disclosure and credit.
+Email **hi@forest.dev**. Please do not open public issues for exploitable vulnerabilities; we'll coordinate disclosure and credit.
