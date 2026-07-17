@@ -22,6 +22,7 @@ import {
 } from '../rules/index.ts';
 import { PackageMetadataSchema, ForestJsonSchema } from '../schemas.ts';
 import type { ForestJson, PackageMetadata } from '../schemas.ts';
+import { InternalApiError } from '../internalApiClient.ts';
 import type { InternalApiClient } from '../internalApiClient.ts';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { createBufferingSink, putPackageObject } from '../uploader.ts';
@@ -186,32 +187,36 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         const finalKey = `${metadata.public ? 'public' : 'private'}/${hashToFilename(hashResult.hash)}`;
         await putPackageObject(deps.s3, deps.bucketName, finalKey, getBuffer());
 
-        await deps.internalApi.recordPublishedVersion({
-            scope: forestJson.author,
-            name: forestJson.name,
-            platform: forestJson.platform,
-            version: forestJson.version,
-            hash: hashResult.hash,
-            archiveRoot: forestJson.root,
-            readme: metadata.readme,
-            description: forestJson.description,
-            declaredLicense: forestJson.license,
-            licenseRating: licenseVerdict.rating,
-            licenseCaveats: licenseVerdict.caveats,
-            licenseVerified: licenseVerdict.verified,
-            needsAiScan: licenseVerdict.needsAiScan,
-            licenseText: licenseCapture.text,
-            isPublic: metadata.public === true,
-            // Normalize string shorthand to object form, but preserve a
-            // custom alias where one was declared — a dependency's alias
-            // controls the folder name Luau `require`s it by, and must
-            // never be silently discarded in favor of the dependency key.
-            dependencies: Object.fromEntries(
-                Object.entries(forestJson.dependencies).map(([k, v]) =>
-                    [k, typeof v === 'string' ? { version: v, alias: k } : v]
-                )
-            ),
-        }, request.headers.authorization);
+        try {
+            await deps.internalApi.recordPublishedVersion({
+                scope: forestJson.author,
+                name: forestJson.name,
+                platform: forestJson.platform,
+                version: forestJson.version,
+                hash: hashResult.hash,
+                archiveRoot: forestJson.root,
+                readme: metadata.readme,
+                description: forestJson.description,
+                declaredLicense: forestJson.license,
+                licenseRating: licenseVerdict.rating,
+                licenseCaveats: licenseVerdict.caveats,
+                licenseVerified: licenseVerdict.verified,
+                needsAiScan: licenseVerdict.needsAiScan,
+                licenseText: licenseCapture.text,
+                isPublic: metadata.public === true,
+                // Normalize string shorthand to object form.
+                dependencies: Object.fromEntries(
+                    Object.entries(forestJson.dependencies).map(([k, v]) =>
+                        [k, typeof v === 'string' ? { version: v } : v]
+                    )
+                ),
+            }, request.headers.authorization);
+        } catch (err) {
+            if (err instanceof InternalApiError) {
+                return reply.status(err.status).send({ error: err.apiError });
+            }
+            throw err;
+        }
 
         return reply.status(200).send({ version: forestJson.version, hash: hashResult.hash });
     });

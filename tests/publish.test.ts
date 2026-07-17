@@ -137,7 +137,7 @@ test('a valid package with a matching license is accepted, hashed, stored, and r
     assert.equal(client.verifyLicenseCalls[0].isPublic, true);
 });
 
-test('a dependency with a custom alias keeps that alias — it must never be silently replaced with the dependency key', async () => {
+test('a custom dependency alias is preserved, and none is fabricated for string shorthand', async () => {
     const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
     const { client: s3 } = makeFakeS3();
     const app = buildApp(client, s3);
@@ -150,7 +150,7 @@ test('a dependency with a custom alias keeps that alias — it must never be sil
             name: 'forestJson',
             value: forestJsonFor({
                 dependencies: {
-                    'scope/shorthand': '^1.0.0', // string shorthand -> alias defaults to the key
+                    'scope/shorthand': '^1.0.0', // string shorthand -> recorded alias-less; consumers derive the name from the key
                     'scope/promise': { version: '^2.0.0', alias: 'MyPromise' }, // explicit custom alias
                 },
             }),
@@ -166,7 +166,9 @@ test('a dependency with a custom alias keeps that alias — it must never be sil
 
     assert.equal(res.statusCode, 200);
     const deps = client.recordedCalls[0].dependencies;
-    assert.deepEqual(deps['scope/shorthand'], { version: '^1.0.0', alias: 'scope/shorthand' });
+    // No fabricated alias: a full `scope/name` key is never a legal folder
+    // name, so shorthand deps are recorded alias-less.
+    assert.deepEqual(deps['scope/shorthand'], { version: '^1.0.0' });
     assert.deepEqual(deps['scope/promise'], { version: '^2.0.0', alias: 'MyPromise' });
 });
 

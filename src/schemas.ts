@@ -27,7 +27,7 @@ export const ForestJsonSchema = z.object({
     version: z.string().regex(/^\d+\.\d+\.\d+(-[\w.-]+)?(\+[\w.-]+)?$/, {
         message: 'Version must be in format x.x.x'
     }).default('0.1.0'),
-    dependencies: z.record(z.string().or(z.object({ alias: z.string(), version: z.string() }))).default({}),
+    dependencies: z.record(z.string().or(z.object({ alias: z.string().optional(), version: z.string() }))).default({}),
     description: z.string().optional(),
     platform: z.string().min(1).optional(),
     license: LicenseSchema,

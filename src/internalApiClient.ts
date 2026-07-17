@@ -59,11 +59,14 @@ export interface AccessFacts {
     licenseVerified: boolean | null;
     archiveRoot: string | null;
     ownerType: string | null;
+    // Canonical identity
+    name?: string | null;
+    scope?: string | null;
 }
 
 export interface DependencySpec {
     version: string;
-    alias: string;
+    alias?: string;
 }
 
 export interface RecordPublishedVersionInput {
@@ -128,6 +131,17 @@ export interface InternalApiClient {
     class nor its caller ever sees a Mongo connection string, a Redis URL, or
     any business-logic secret — only these three JSON responses.
 */
+export class InternalApiError extends Error {
+    readonly status: number;
+    readonly apiError: string;
+
+    constructor(status: number, apiError: string, path: string) {
+        super(`Internal API call to ${path} failed: HTTP ${status} — ${apiError}`);
+        this.status = status;
+        this.apiError = apiError;
+    }
+}
+
 export class BackendInternalApiClient implements InternalApiClient {
     private readonly baseUrl: string;
     private readonly internalSecret: string;
@@ -150,6 +164,12 @@ export class BackendInternalApiClient implements InternalApiClient {
             body: body ? JSON.stringify(body) : undefined,
         });
         if (!res.ok) {
+            if (res.status < 500) {
+                const body = await res.json().catch(() => null) as { error?: string } | null;
+                if (body?.error) {
+                    throw new InternalApiError(res.status, body.error, path);
+                }
+            }
             throw new Error(`Internal API call to ${path} failed: HTTP ${res.status}`);
         }
         return res.json();
