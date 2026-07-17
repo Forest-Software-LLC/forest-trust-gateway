@@ -81,6 +81,15 @@ export function registerAccessRoute(fastify: FastifyInstance, deps: AccessRouteD
         }
 
         return reply.status(200).send({
+            // Canonical identity: names resolve case-insensitively, so the
+            // URL's casing may differ from the stored one. The CLI uses these
+            // to canonicalize what the user typed; null/absent (old backend
+            // or a cached pre-field response) means "no canonical known".
+            // Note differently-cased URLs are distinct edge-cache keys — the
+            // shared cache may hold the same package under several casings,
+            // all with identical canonical content.
+            name: facts.name ?? null,
+            scope: facts.scope ?? null,
             version: facts.resolvedVersion,
             description: facts.description,
             dependencies: facts.dependencies,
