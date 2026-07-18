@@ -23,6 +23,9 @@ export interface UploaderConfig {
     accessKeyId: string;
     secretAccessKey: string;
     bucketName: string;
+    // Local-dev S3 stand-ins (MinIO) need path-style addressing; R2 in prod
+    // uses the default virtual-host style.
+    forcePathStyle?: boolean;
 }
 
 export function createS3Client(config: UploaderConfig): S3Client {
@@ -33,6 +36,7 @@ export function createS3Client(config: UploaderConfig): S3Client {
             accessKeyId: config.accessKeyId,
             secretAccessKey: config.secretAccessKey,
         },
+        forcePathStyle: config.forcePathStyle ?? false,
     });
 }
 
