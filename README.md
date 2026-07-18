@@ -17,6 +17,7 @@ Served at **packages.forest.dev**:
 
 - `POST /v1/package/upload`
 - `GET /v1/package/:scope/:platform/:name/:version`
+- `PUT /internal/mirror-tarball?hash=<sha256>` — wally-mirror ingest (`src/routes/mirrorTarball.ts`). forest-backend's sync job pushes converted wally tarballs here because it deliberately holds no storage credentials. The route keeps the content-addressing rule: the key is derived from the hash of the bytes actually received (must match the claim), so callers can only ever ADD objects, never overwrite one. Gated by `x-mirror-secret`; registered only when `GATEWAY_MIRROR_SECRET` is set. Like the backend's `/internal/*`, it is publicly reachable — a WAF rule on the zone should block outside traffic to `/internal/*` as the primary control, with the secret as defense in depth.
 
 CI deploys this repo to that hostname, so the code answering those routes is verifiable against this repo's history.
 
@@ -43,6 +44,8 @@ npm run dev  # requires a backend instance (BACKEND_INTERNAL_BASE_URL) plus stor
 | `BACKEND_INTERNAL_BASE_URL` | Where the backend's internal API is reached |
 | `INTERNAL_API_SECRET` | Shared secret sent with internal API calls |
 | `CDN_BASE_URL` | Base URL for content-addressed download links, e.g. `https://registry.forest.dev` |
+| `GATEWAY_MIRROR_SECRET` | Optional; enables `PUT /internal/mirror-tarball` |
+| `R2_FORCE_PATH_STYLE` | Optional (`1`): path-style S3 addressing for local dev against MinIO |
 
 ## License
 
