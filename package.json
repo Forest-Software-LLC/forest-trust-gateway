@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "forest-trust-gateway",
   "version": "0.1.0",
   "description": "Public, independently buildable service handling Forest package publish and download. Verifies and hashes packages itself using its own public trust rules (src/rules/); everything else (who's allowed to do what, what a license means) is a fact fetched from the private forest-backend over an internal API, never a database it holds itself.",
@@ -19,6 +19,7 @@
     "@cloudflare/containers": "^0.3.7",
     "@fastify/multipart": "^9.0.3",
     "fastify": "^5.2.2",
+    "forest-shared-resources": "github:Forest-Software-LLC/forest-shared-resources#v0.1.1",
     "tar-stream": "^3.1.7",
     "zod": "^3.24.2"
   },

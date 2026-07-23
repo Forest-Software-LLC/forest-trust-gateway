@@ -59,3 +59,59 @@ test('captures top-level LICENSE text during validation', async () => {
   await validateTgz(toStream(buf), { licenseCapture });
   assert.equal(licenseCapture.text, 'MIT License text here');
 });
+
+// ---- entryInspector hook (uefn platform branch) ------------------------------
+
+test('entryInspector.inspectName rejects the archive mid-extraction', async () => {
+  const buf = await createTgz([
+    { name: 'ok.verse', content: 'F():void = {}' },
+    { name: 'bad.lua', content: 'return {}' },
+  ]);
+  await assert.rejects(
+    () => validateTgz(toStream(buf), {
+      entryInspector: { inspectName: (name) => name.endsWith('.lua') ? `nope: ${name}` : null },
+    }),
+    /nope: bad\.lua/,
+  );
+});
+
+test('entryInspector capture delivers exact contents while LICENSE capture still works', async () => {
+  const buf = await createTgz([
+    { name: 'LICENSE', content: 'MIT License text here' },
+    { name: 'Calc.verse', content: 'Double<public>(X:int):int = X + X' },
+    { name: 'README.md', content: '# not captured' },
+  ]);
+  const licenseCapture: { text?: string } = {};
+  const captured = new Map<string, string>();
+  await validateTgz(toStream(buf), {
+    licenseCapture,
+    entryInspector: {
+      shouldCapture: (name) => name.endsWith('.verse'),
+      onFile: (name, content) => { captured.set(name, content); },
+    },
+  });
+  assert.equal(licenseCapture.text, 'MIT License text here');
+  assert.equal(captured.size, 1);
+  assert.equal(captured.get('Calc.verse'), 'Double<public>(X:int):int = X + X');
+});
+
+test('entryInspector per-file capture cap overflow fails the archive (never truncates)', async () => {
+  const buf = await createTgz([
+    { name: 'big.verse', content: 'x'.repeat(1000) },
+  ]);
+  await assert.rejects(
+    () => validateTgz(toStream(buf), {
+      entryInspector: {
+        shouldCapture: (name) => name.endsWith('.verse'),
+        onFile: () => {},
+        maxCaptureBytes: 100,
+      },
+    }),
+    /too large to scan/,
+  );
+});
+
+test('no inspector: behavior identical to before the hook existed', async () => {
+  const buf = await createTgz([{ name: 'anything.xyz', content: 'bytes' }]);
+  await assert.doesNotReject(() => validateTgz(toStream(buf)));
+});

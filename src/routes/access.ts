@@ -14,11 +14,12 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { decidePackageAccess, generateSignedUrl } from '../rules/index.ts';
+import { PlatformSchema } from '../schemas.ts';
 import type { InternalApiClient } from '../internalApiClient.ts';
 
 const paramsSchema = z.object({
     scope: z.string(),
-    platform: z.enum(['roblox', 'uefn']),
+    platform: PlatformSchema,
     name: z.string(),
     // A concrete version, a semver range, or a tag — the backend resolves
     // it (invalid/omitted range falls back to latest-stable) and reports
