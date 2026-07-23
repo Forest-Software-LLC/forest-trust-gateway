@@ -19,6 +19,8 @@ import {
     hashAndPipe,
     decidePublishPermission,
     hashToFilename,
+    validateUefnPackage,
+    makeUefnEntryInspector,
 } from '../rules/index.ts';
 import { PackageMetadataSchema, ForestJsonSchema } from '../schemas.ts';
 import type { ForestJson, PackageMetadata } from '../schemas.ts';
@@ -102,6 +104,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         if (!forestJson.platform) {
             return reply.status(400).send({ error: 'forestJson.platform is required' });
         }
+        const isUefn = forestJson.platform === 'uefn';
+        // path -> utf8 text of every .verse file, filled during validateTgz's
+        // extraction pass and consumed by the uefn lexical scan below.
+        const verseFiles = new Map<string, string>();
 
         // Authorization check before any validation/hashing/storage work —
         // the file is already buffered in memory at this point (multipart
@@ -151,7 +157,13 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         const validatePass = new PassThrough();
         validatePass.end(fileBuffer);
         const licenseCapture: { text?: string } = {};
-        const validatePipeline = validateTgz(validatePass, { licenseCapture });
+        const validatePipeline = validateTgz(validatePass, {
+            licenseCapture,
+            // uefn gets filename rules (Verse-code-only allowlist, digest/
+            // receipt/binary rejects) + .verse capture; roblox passes no
+            // inspector and behaves exactly as before.
+            entryInspector: isUefn ? makeUefnEntryInspector(verseFiles) : undefined,
+        });
         const { sink: bufferSink, getBuffer } = createBufferingSink();
 
         let hashResult: { hash: string };
@@ -163,6 +175,25 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             hashResult = hashOutcome as { hash: string };
         } catch (err) {
             return reply.status(400).send({ error: `File validation failed: ${(err as Error).message}` });
+        }
+
+        // uefn lexical scan — fail fast before the license call and long
+        // before anything touches R2. Warnings (e.g. no <public> exports)
+        // ride the success response for the CLI to print.
+        let uefnWarnings: string[] | undefined;
+        if (isUefn) {
+            const uefnResult = validateUefnPackage({
+                files: verseFiles,
+                ownScope: forestJson.author,
+                ownName: forestJson.name,
+                dependencyKeys: Object.keys(forestJson.dependencies),
+            });
+            if (uefnResult.errors.length > 0) {
+                return reply.status(400).send({ error: uefnResult.errors.join('\n') });
+            }
+            if (uefnResult.warnings.length > 0) {
+                uefnWarnings = uefnResult.warnings;
+            }
         }
 
         // What the license actually means is the backend's call, not this
@@ -194,7 +225,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
                 platform: forestJson.platform,
                 version: forestJson.version,
                 hash: hashResult.hash,
-                archiveRoot: forestJson.root,
+                // uefn has no entry-point file — the folder is the package
+                // (superRefine guarantees root's presence for other platforms)
+                archiveRoot: isUefn ? '' : forestJson.root!,
+                compatVersion: metadata.compatVersion,
                 readme: metadata.readme,
                 description: forestJson.description,
                 declaredLicense: forestJson.license,
@@ -218,6 +252,12 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             throw err;
         }
 
-        return reply.status(200).send({ version: forestJson.version, hash: hashResult.hash });
+        // Roblox responses are byte-identical: warnings only appears for uefn
+        // publishes that produced any.
+        return reply.status(200).send({
+            version: forestJson.version,
+            hash: hashResult.hash,
+            ...(uefnWarnings ? { warnings: uefnWarnings } : {}),
+        });
     });
 }

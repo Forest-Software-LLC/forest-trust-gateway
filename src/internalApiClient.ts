@@ -58,6 +58,8 @@ export interface AccessFacts {
     licenseCaveats: string[] | null;
     licenseVerified: boolean | null;
     archiveRoot: string | null;
+    // uefn only: authored-against UEFN compatibilityVersion (display/warn)
+    compatVersion?: string | null;
     ownerType: string | null;
     // Canonical identity
     name?: string | null;
@@ -86,6 +88,9 @@ export interface RecordPublishedVersionInput {
     licenseText?: string;
     isPublic: boolean;
     dependencies: Record<string, DependencySpec>;
+    // uefn only: authored-against UEFN compatibilityVersion (from upload
+    // metadata; the backend stores it on the version for display/warn)
+    compatVersion?: string;
 }
 
 export type LicenseVerdict =

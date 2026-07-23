@@ -390,3 +390,210 @@ test('the requested visibility is forwarded on the publish-authorization call', 
     assert.equal(client.publishAuthorizationCalls.length, 1);
     assert.equal(client.publishAuthorizationCalls[0].isPublic, false);
 });
+
+// ---- UEFN platform branch ----------------------------------------------------
+
+function uefnForestJson(overrides: Partial<Record<string, unknown>> = {}) {
+    return JSON.stringify({
+        name: 'testpkg',
+        author: 'testscope',
+        version: '1.0.0',
+        dependencies: { 'cool-studio/MathUtil': '^1.0.0' },
+        platform: 'uefn',
+        license: 'MIT',
+        ...overrides,
+    });
+}
+
+function uefnUpload(forestJson: string, tgz: Buffer, metadata: Record<string, unknown> = { public: true }) {
+    return buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify(metadata) },
+        { name: 'forestJson', value: forestJson },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+}
+
+test('uefn happy path: no root, dep import, archiveRoot empty, compatVersion forwarded, no warnings key', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'forest.json', content: uefnForestJson() },
+        { name: 'Calc.verse', content: 'using { ForestPackages.cool_studio.MathUtil }\nDouble<public>(X:int):int = Add(X, X)\n' },
+    ]);
+    const { body, contentType } = uefnUpload(uefnForestJson(), tgz, { public: true, compatVersion: '41.20' });
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const resBody = res.json();
+    assert.equal(resBody.version, '1.0.0');
+    assert.equal('warnings' in resBody, false, 'clean publish must not carry a warnings key');
+    assert.equal(puts.length, 1);
+    assert.equal(client.recordedCalls.length, 1);
+    assert.equal(client.recordedCalls[0].archiveRoot, '');
+    assert.equal(client.recordedCalls[0].platform, 'uefn');
+    assert.equal(client.recordedCalls[0].compatVersion, '41.20');
+});
+
+test('uefn: Epic digest file in the tarball is rejected before license/R2/record', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'Foo.digest.verse', content: 'x' },
+    ]);
+    const { body, contentType } = uefnUpload(uefnForestJson(), tgz);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /digest/);
+    assert.equal(puts.length, 0);
+    assert.equal(client.recordedCalls.length, 0);
+    assert.equal(client.verifyLicenseCalls.length, 0);
+});
+
+test('uefn: project-absolute Verse path rejected; Epic-root path allowed', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const badTgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'A.verse', content: 'using { /mydomain/MyProj/Thing }\nF<public>():void = {}\n' },
+    ]);
+    const bad = uefnUpload(uefnForestJson(), badTgz);
+    const badRes = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': bad.contentType, 'x-file-size': String(badTgz.length), authorization: 'Bearer test' },
+        payload: bad.body,
+    });
+    assert.equal(badRes.statusCode, 400);
+    assert.match(badRes.json().error, /absolute Verse path/);
+    assert.equal(puts.length, 0);
+
+    const okTgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'A.verse', content: 'using { /Verse.org/Simulation }\nF<public>():void = {}\n' },
+    ]);
+    const ok = uefnUpload(uefnForestJson(), okTgz);
+    const okRes = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': ok.contentType, 'x-file-size': String(okTgz.length), authorization: 'Bearer test' },
+        payload: ok.body,
+    });
+    assert.equal(okRes.statusCode, 200);
+});
+
+test('uefn: undeclared ForestPackages import is rejected naming the reference', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'A.verse', content: 'using { ForestPackages.someone_else.Thing }\nF<public>():void = {}\n' },
+    ]);
+    const { body, contentType } = uefnUpload(uefnForestJson(), tgz);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /someone_else\.Thing/);
+});
+
+test('uefn: self-reference by published path is rejected', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'A.verse', content: 'using { ForestPackages.testscope.testpkg }\nF<public>():void = {}\n' },
+    ]);
+    const { body, contentType } = uefnUpload(uefnForestJson(), tgz);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /own published path/);
+});
+
+test('uefn: package with no <public> export succeeds with a warnings array', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'A.verse', content: 'Internal(X:int):int = X\n' },
+    ]);
+    const { body, contentType } = uefnUpload(uefnForestJson(), tgz);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const resBody = res.json();
+    assert.ok(Array.isArray(resBody.warnings));
+    assert.match(resBody.warnings[0], /<public>/);
+    assert.equal(puts.length, 1, 'warnings do not block storage');
+});
+
+test('uefn manifest without root parses; roblox manifest without root is still rejected', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    // roblox without root must fail schema parse (superRefine)
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'src/init.luau', content: 'return {}' },
+    ]);
+    const robloxNoRoot = forestJsonFor({ root: undefined });
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: robloxNoRoot },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /Invalid JSON format for field forestJson/);
+});

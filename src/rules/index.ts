@@ -1,4 +1,6 @@
 export { validateTgz } from './validateTgz.ts';
+export type { TgzEntryInspector } from './validateTgz.ts';
+export { checkUefnEntryName, validateUefnPackage, makeUefnEntryInspector, mapScopeToVerseIdentifier } from './uefnRules.ts';
 export { hashToFilename, isDuplicateVersion } from './contentAddress.ts';
 export { decidePackageAccess } from './accessPolicy.ts';
 export type { PackageAccessFacts, OrgMembershipRank } from './accessPolicy.ts';

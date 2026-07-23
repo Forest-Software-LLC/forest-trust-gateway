@@ -3,6 +3,23 @@ import tar from 'tar-stream';
 import { PassThrough, Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
+// Per-platform hook into the extraction pass. `inspectName` can reject an
+// entry by name/type (returning an error message fails the whole archive,
+// mid-extraction); `shouldCapture`/`onFile` collect selected files' text for
+// a post-extraction content pass (e.g. the UEFN lexical scan). With no
+// inspector supplied, behavior is byte-identical to before the hook existed.
+export interface TgzEntryInspector {
+    inspectName?(name: string, type: string | undefined): string | null;
+    shouldCapture?(name: string): boolean;
+    onFile?(name: string, content: string): void;
+    // Per-file cap for captured entries. Overflow FAILS the archive rather
+    // than truncating — a truncated file could hide content past the cap
+    // from the post-pass scan.
+    maxCaptureBytes?: number;
+}
+
+const DEFAULT_MAX_CAPTURE_BYTES = 256 * 1024;
+
 interface TgzValidationOptions {
     maxFiles?: number;
     maxTotalSize?: number; // in bytes
@@ -12,6 +29,7 @@ interface TgzValidationOptions {
     // When provided, the top-level LICENSE file's text is captured here during
     // the same pass (for license verification) — no second read of the archive.
     licenseCapture?: { text?: string };
+    entryInspector?: TgzEntryInspector;
 }
 
 const LICENSE_FILE_NAMES = new Set(['license', 'license.txt', 'license.md']);
@@ -25,7 +43,8 @@ export async function validateTgz(
         maxFileSize = 10 * 1024 * 1024,  // 10 MB
         maxPathDepth = 16,
         timeoutMs = 5000,
-        licenseCapture
+        licenseCapture,
+        entryInspector
     }: TgzValidationOptions = {}
 ) {
     const extract = tar.extract();
@@ -78,6 +97,13 @@ export async function validateTgz(
             return fail('Total archive size exceeds limit');
         }
 
+        if (entryInspector?.inspectName) {
+            const nameError = entryInspector.inspectName(name, header.type ?? undefined);
+            if (nameError) {
+                return fail(nameError);
+            }
+        }
+
         const pathSegments = name.split('/').filter(Boolean);
         const isTopLevelLicense = pathSegments.length === 1
             && LICENSE_FILE_NAMES.has(pathSegments[0].toLowerCase());
@@ -93,6 +119,24 @@ export async function validateTgz(
             });
             stream.on('end', () => {
                 licenseCapture.text = Buffer.concat(chunks).toString('utf8');
+                next();
+            });
+        } else if (entryInspector?.shouldCapture?.(name)) {
+            // Disjoint from the license branch: capture targets (e.g.
+            // *.verse) never match LICENSE_FILE_NAMES. Total memory is
+            // already bounded by maxTotalSize.
+            const cap = entryInspector.maxCaptureBytes ?? DEFAULT_MAX_CAPTURE_BYTES;
+            const chunks: Buffer[] = [];
+            let captured = 0;
+            stream.on('data', (chunk: Buffer) => {
+                captured += chunk.length;
+                if (captured > cap) {
+                    return fail(`File too large to scan: ${name}`);
+                }
+                chunks.push(chunk);
+            });
+            stream.on('end', () => {
+                entryInspector.onFile?.(name, Buffer.concat(chunks).toString('utf8'));
                 next();
             });
         } else {
