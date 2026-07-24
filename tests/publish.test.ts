@@ -137,6 +137,34 @@ test('a valid package with a matching license is accepted, hashed, stored, and r
     assert.equal(client.verifyLicenseCalls[0].isPublic, true);
 });
 
+test('a Windows-style backslash root is stored with forward slashes', async () => {
+    // Publishers on Windows write OS-style paths into forest.json's root;
+    // the stored archiveRoot drives extraction path-matching on EVERY
+    // consumer OS, so it must be forward-slashed (chiefwildin/AnimNation
+    // @1.14.0 shipped as `AnimNation\init.luau` and broke mac/linux).
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy' }, { name: 'AnimNation/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor({ root: 'AnimNation\\init.luau' }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(client.recordedCalls.length, 1);
+    assert.equal(client.recordedCalls[0].archiveRoot, 'AnimNation/init.luau');
+});
+
 test('a custom dependency alias is preserved, and none is fabricated for string shorthand', async () => {
     const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
     const { client: s3 } = makeFakeS3();
