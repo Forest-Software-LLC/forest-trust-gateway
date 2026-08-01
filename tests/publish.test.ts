@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createGzip } from 'node:zlib';
 import tar from 'tar-stream';
 import Fastify from 'fastify';
@@ -23,11 +23,16 @@ async function makeTgz(entries: { name: string; content: string }[]): Promise<Bu
 // A fake S3Client that just records what it was asked to store, so tests
 // never touch real R2 credentials or network.
 function makeFakeS3() {
-    const puts: { key: string; body: Buffer }[] = [];
+    const puts: { key: string; body: Buffer; ssecAlgorithm?: string; ssecKey?: string }[] = [];
     return {
         client: {
             send: async (command: any) => {
-                puts.push({ key: command.input.Key, body: Buffer.from(command.input.Body) });
+                puts.push({
+                    key: command.input.Key,
+                    body: Buffer.from(command.input.Body),
+                    ssecAlgorithm: command.input.SSECustomerAlgorithm,
+                    ssecKey: command.input.SSECustomerKey,
+                });
                 return {};
             },
         } as any,
@@ -37,12 +42,12 @@ function makeFakeS3() {
 
 const dummyAccessFacts = deniedAccessFacts;
 
-function buildApp(client: MockInternalApiClient, s3: any, fileSizeLimit = 10 * 1024 * 1024) {
+function buildApp(client: MockInternalApiClient, s3: any, fileSizeLimit = 10 * 1024 * 1024, tarballEncKey?: Buffer) {
     const fastify = Fastify();
     // Same registration shape as src/server.ts — the fileSize limit is part
     // of the contract under test (see the oversized-upload tests below).
     fastify.register(multipart, { limits: { fileSize: fileSizeLimit } });
-    registerPublishRoute(fastify, { internalApi: client, s3, bucketName: 'test-bucket', cdnBaseUrl: 'https://registry.forest.dev' });
+    registerPublishRoute(fastify, { internalApi: client, s3, bucketName: 'test-bucket', cdnBaseUrl: 'https://registry.forest.dev', tarballEncKey });
     return fastify;
 }
 
@@ -624,4 +629,91 @@ test('uefn manifest without root parses; roblox manifest without root is still r
 
     assert.equal(res.statusCode, 400);
     assert.match(res.json().error, /Invalid JSON format for field forestJson/);
+});
+
+/*
+    Encryption at rest: a private publish with the master key configured
+    must reach R2 with SSE-C parameters whose key is derived from the
+    final storage key (see src/rules/tarballEncryption.ts). The body the
+    S3 client receives is still plaintext — R2 does the encrypting.
+*/
+test('a private publish with TARBALL_ENC_KEY set stores with a derived SSE-C key', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
+    const app = buildApp(client, s3, undefined, masterKey);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: false }) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const expectedHash = createHash('sha256').update(tgz).digest('hex');
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].key, `private/${expectedHash}.tgz`);
+    assert.equal(puts[0].ssecAlgorithm, 'AES256');
+    const expectedKey = createHmac('sha256', masterKey).update(`private/${expectedHash}.tgz`, 'utf8').digest('base64');
+    assert.equal(puts[0].ssecKey, expectedKey);
+    // Plaintext body: encryption happens inside R2, not here.
+    assert.equal(puts[0].body.toString('base64'), tgz.toString('base64'));
+});
+
+test('a public publish never carries SSE-C parameters, even with the key configured', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3, undefined, Buffer.alloc(32, 7));
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].ssecAlgorithm, undefined);
+    assert.equal(puts[0].ssecKey, undefined);
+});
+
+test('a private publish without TARBALL_ENC_KEY stores plaintext (local-dev / pre-rollout path)', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: false }) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].ssecAlgorithm, undefined);
+    assert.equal(puts[0].ssecKey, undefined);
 });

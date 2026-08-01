@@ -58,11 +58,17 @@ export function createBufferingSink(): { sink: Writable; getBuffer: () => Buffer
     return { sink, getBuffer: () => Buffer.concat(chunks) };
 }
 
-export async function putPackageObject(s3: S3Client, bucketName: string, key: string, body: Buffer): Promise<void> {
+export async function putPackageObject(s3: S3Client, bucketName: string, key: string, body: Buffer, ssecKey?: Buffer): Promise<void> {
     await s3.send(new PutObjectCommand({
         Bucket: bucketName,
         Key: key,
         Body: body,
         ContentType: 'application/gzip',
+        // SSE-C: the SDK's ssec middleware recognizes a base64-encoded
+        // 32-byte key string and computes SSECustomerKeyMD5 itself.
+        ...(ssecKey ? {
+            SSECustomerAlgorithm: 'AES256',
+            SSECustomerKey: ssecKey.toString('base64'),
+        } : {}),
     }));
 }

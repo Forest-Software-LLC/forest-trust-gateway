@@ -21,6 +21,7 @@ import {
     hashToFilename,
     validateUefnPackage,
     makeUefnEntryInspector,
+    deriveObjectEncryptionKey,
 } from '../rules/index.ts';
 import { PackageMetadataSchema, ForestJsonSchema } from '../schemas.ts';
 import type { ForestJson, PackageMetadata } from '../schemas.ts';
@@ -34,6 +35,9 @@ export interface PublishRouteDeps {
     s3: S3Client;
     bucketName: string;
     cdnBaseUrl: string; // e.g. https://registry.forest.dev
+    // Master key for private-tarball encryption
+    // Optional: local dev runs against MinIO, which refuses SSE-C over plain HTTP, so unset means store plaintext.
+    tarballEncKey?: Buffer;
 }
 
 export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRouteDeps) {
@@ -216,7 +220,12 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         // key. Nothing temporary, nothing to clean up if an earlier step
         // had failed.
         const finalKey = `${metadata.public ? 'public' : 'private'}/${hashToFilename(hashResult.hash)}`;
-        await putPackageObject(deps.s3, deps.bucketName, finalKey, getBuffer());
+        // Private tarballs are SSE-C encrypted under a key derived from the
+        // storage key itself; public ones stay plaintext.
+        const ssecKey = !metadata.public && deps.tarballEncKey
+            ? deriveObjectEncryptionKey(deps.tarballEncKey, finalKey)
+            : undefined;
+        await putPackageObject(deps.s3, deps.bucketName, finalKey, getBuffer(), ssecKey);
 
         try {
             await deps.internalApi.recordPublishedVersion({

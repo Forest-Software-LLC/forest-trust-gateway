@@ -45,6 +45,7 @@ npm run dev  # requires a backend instance (BACKEND_INTERNAL_BASE_URL) plus stor
 | `INTERNAL_API_SECRET` | Shared secret sent with internal API calls |
 | `CDN_BASE_URL` | Base URL for content-addressed download links, e.g. `https://registry.forest.dev` |
 | `GATEWAY_MIRROR_SECRET` | Optional; enables `PUT /internal/mirror-tarball` |
+| `TARBALL_ENC_KEY` | Optional; base64 of 32 bytes. Private tarballs are stored with R2 SSE-C under per-object keys derived from it (`src/rules/tarballEncryption.ts`). Must match forest-cdn-worker's copy of the same secret. Unset (local dev: MinIO refuses SSE-C over plain HTTP) stores private tarballs plaintext |
 | `R2_FORCE_PATH_STYLE` | Optional (`1`): path-style S3 addressing for local dev against MinIO |
 
 ## License
