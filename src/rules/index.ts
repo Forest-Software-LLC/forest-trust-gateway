@@ -7,4 +7,5 @@ export type { PackageAccessFacts, OrgMembershipRank } from './accessPolicy.ts';
 export { decidePublishPermission } from './publishPolicy.ts';
 export type { PublishPermissionFacts, PublishPermissionResult } from './publishPolicy.ts';
 export { generateSignedUrl } from './signedUrl.ts';
+export { decodeTarballEncKey, deriveObjectEncryptionKey, TARBALL_ENC_KEY_BYTES } from './tarballEncryption.ts';
 export { hashAndPipe } from './hashAndPipe.ts';

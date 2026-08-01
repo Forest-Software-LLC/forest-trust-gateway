@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import { createS3Client } from './uploader.ts';
+import { decodeTarballEncKey } from './rules/index.ts';
 import { BackendInternalApiClient } from './internalApiClient.ts';
 import { registerPublishRoute } from './routes/publish.ts';
 import { registerAccessRoute } from './routes/access.ts';
@@ -47,16 +48,22 @@ async function main() {
     const workerSigKey = requireEnv('WORKER_SIG_KEY');
     const bucketName = requireEnv('R2_BUCKET_NAME');
 
-    registerPublishRoute(fastify, { internalApi, s3, bucketName, cdnBaseUrl });
+    const tarballEncKeyRaw = process.env.TARBALL_ENC_KEY;
+    const tarballEncKey = tarballEncKeyRaw ? decodeTarballEncKey(tarballEncKeyRaw) : undefined;
+    if (!tarballEncKey) {
+        fastify.log.warn('TARBALL_ENC_KEY not set: private tarballs will be stored WITHOUT encryption at rest');
+    }
+
+    registerPublishRoute(fastify, { internalApi, s3, bucketName, cdnBaseUrl, tarballEncKey });
     registerAccessRoute(fastify, { internalApi, workerSigKey, cdnBaseUrl });
 
-    // Optional so a deploy without the secret still boots — the wally
+    // Optional so a deploy without the secret still boots. The wally
     // mirror ingest simply stays disabled until the secret is provisioned.
     const mirrorSecret = process.env.GATEWAY_MIRROR_SECRET;
     if (mirrorSecret) {
         registerMirrorTarballRoute(fastify, { s3, bucketName, mirrorSecret });
     } else {
-        fastify.log.warn('GATEWAY_MIRROR_SECRET not set — /internal/mirror-tarball is disabled');
+        fastify.log.warn('GATEWAY_MIRROR_SECRET not set: /internal/mirror-tarball is disabled');
     }
 
     const port = Number(process.env.PORT || 8081);
