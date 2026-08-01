@@ -38,7 +38,11 @@ export const ForestJsonSchema = z.object({
     // Optional at the field level so uefn manifests may omit it (a uefn
     // package has no entry-point file — the folder IS the package); the
     // superRefine below keeps it required for every other platform.
-    root: z.string().min(1).optional(),
+    // Backslashes are normalized to forward slashes: Windows publishers
+    // write OS-style paths, but this value becomes the stored archiveRoot
+    // that every installer matches against tar entry paths (always
+    // forward-slashed) — a raw backslash breaks extraction on mac/linux.
+    root: z.string().min(1).transform((s) => s.replace(/\\/g, '/')).optional(),
     version: z.string().regex(/^\d+\.\d+\.\d+(-[\w.-]+)?(\+[\w.-]+)?$/, {
         message: 'Version must be in format x.x.x'
     }).default('0.1.0'),
