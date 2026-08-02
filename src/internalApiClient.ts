@@ -103,8 +103,7 @@ export interface InternalApiClient {
         scope: string;
         name: string;
         platform: string;
-        // The requested visibility — the backend gates private publishes
-        // behind a Pro subscription (surfaced via blockedReason).
+        // The requested visibility. Backend enforces the eligibility (surfaced via blockedReason).
         isPublic: boolean;
     }): Promise<PublishAuthorizationFacts>;
 
