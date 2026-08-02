@@ -26,9 +26,9 @@ export class MockInternalApiClient implements InternalApiClient {
         this.licenseVerdict = licenseVerdict;
     }
 
-    public publishAuthorizationCalls: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean }[] = [];
+    public publishAuthorizationCalls: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean; dependencyKeys: string[] }[] = [];
 
-    async getPublishAuthorization(params: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean }): Promise<PublishAuthorizationFacts> {
+    async getPublishAuthorization(params: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean; dependencyKeys: string[] }): Promise<PublishAuthorizationFacts> {
         this.publishAuthorizationCalls.push(params);
         return this.publishFacts;
     }

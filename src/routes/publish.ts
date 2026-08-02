@@ -22,6 +22,7 @@ import {
     validateUefnPackage,
     makeUefnEntryInspector,
     deriveObjectEncryptionKey,
+    decideDependencyVisibility,
 } from '../rules/index.ts';
 import { PackageMetadataSchema, ForestJsonSchema } from '../schemas.ts';
 import type { ForestJson, PackageMetadata } from '../schemas.ts';
@@ -124,6 +125,7 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             name: forestJson.name,
             platform: forestJson.platform,
             isPublic: metadata.public === true,
+            dependencyKeys: Object.keys(forestJson.dependencies),
         });
 
         if (!facts.authenticated) {
@@ -151,6 +153,17 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
                 return reply.status(429).send({ error: facts.blockedReason });
             }
             return reply.status(403).send({ error: facts.blockedReason });
+        }
+
+        // Dependency visibility — a manifest problem (400), not a permissions
+        // one, and checked before any validation/hashing/storage work so a
+        // package that nobody could install is never written to R2.
+        const dependencyVisibility = decideDependencyVisibility({
+            isPublic: metadata.public === true,
+            dependencies: facts.dependencies ?? [],
+        });
+        if (!dependencyVisibility.allowed) {
+            return reply.status(400).send({ error: dependencyVisibility.reason });
         }
 
         // Validate + hash — the actual trust-critical work. Each consumer

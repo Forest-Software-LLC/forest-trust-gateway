@@ -717,3 +717,137 @@ test('a private publish without TARBALL_ENC_KEY stores plaintext (local-dev / pr
     assert.equal(puts[0].ssecAlgorithm, undefined);
     assert.equal(puts[0].ssecKey, undefined);
 });
+
+/*
+    Dependency visibility at publish. The gateway sends the declared
+    dependency keys to the backend and applies the pure rule to the facts
+    it gets back — nothing may reach R2 that its own consumers could not
+    install. Rule-level cases live in tests/rules/dependencyVisibility.test.ts;
+    these pin the wiring.
+*/
+test('the declared dependency keys are forwarded on the publish-authorization call', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3 } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor({ dependencies: { 'scope/one': '^1.0.0', 'other/two': { version: '^2.0.0' } } }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(client.publishAuthorizationCalls.length, 1);
+    assert.deepEqual(client.publishAuthorizationCalls[0].dependencyKeys.sort(), ['other/two', 'scope/one']);
+});
+
+test('a public package declaring a private dependency is rejected before anything is stored', async () => {
+    const client = new MockInternalApiClient({
+        ...allowedPublishFacts,
+        dependencies: [{ key: 'me/secret', resolved: true, isPublic: false, ownedByAuthor: true }],
+    }, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor({ dependencies: { 'me/secret': '^1.0.0' } }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /public package cannot depend on private/i);
+    assert.equal(puts.length, 0, 'an uninstallable package must never reach R2');
+    assert.equal(client.recordedCalls.length, 0);
+});
+
+test('a private package declaring another scope\'s private dependency is rejected', async () => {
+    const client = new MockInternalApiClient({
+        ...allowedPublishFacts,
+        dependencies: [{ key: 'them/secret', resolved: true, isPublic: false, ownedByAuthor: false }],
+    }, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: false }) },
+        { name: 'forestJson', value: forestJsonFor({ dependencies: { 'them/secret': '^1.0.0' } }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /owned by the same scope/i);
+    assert.equal(puts.length, 0);
+});
+
+test('a private package may depend on its own scope\'s private package', async () => {
+    const client = new MockInternalApiClient({
+        ...allowedPublishFacts,
+        dependencies: [{ key: 'me/secret', resolved: true, isPublic: false, ownedByAuthor: true }],
+    }, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: false }) },
+        { name: 'forestJson', value: forestJsonFor({ dependencies: { 'me/secret': '^1.0.0' } }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+});
+
+test('a backend that sends no dependency facts still publishes (older-backend compatibility)', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor({ dependencies: { 'scope/one': '^1.0.0' } }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+});
