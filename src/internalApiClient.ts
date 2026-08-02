@@ -22,6 +22,8 @@
     blocks persistence.
 */
 
+import type { DependencyVisibilityFact } from './rules/dependencyVisibility.ts';
+
 export interface PublishAuthorizationFacts {
     authenticated: boolean;
     userId?: string;
@@ -34,6 +36,10 @@ export interface PublishAuthorizationFacts {
     // present, the gateway relays it as-is rather than interpreting it.
     blockedReason?: string;
     retryAfterSeconds?: number;
+    // Visibility of each declared dependency, for decideDependencyVisibility.
+    // Optional: a backend predating the dependency rule sends nothing, and
+    // the rule then has no facts to object to.
+    dependencies?: DependencyVisibilityFact[];
 }
 
 export interface AccessFacts {
@@ -103,9 +109,11 @@ export interface InternalApiClient {
         scope: string;
         name: string;
         platform: string;
-        // The requested visibility — the backend gates private publishes
-        // behind a Pro subscription (surfaced via blockedReason).
+        // The requested visibility. Backend enforces the eligibility (surfaced via blockedReason).
         isPublic: boolean;
+        // Declared dependency keys ("scope/name"), which the backend resolves
+        // into the visibility facts decideDependencyVisibility needs.
+        dependencyKeys: string[];
     }): Promise<PublishAuthorizationFacts>;
 
     verifyLicense(params: {
@@ -180,12 +188,13 @@ export class BackendInternalApiClient implements InternalApiClient {
         return res.json();
     }
 
-    async getPublishAuthorization(params: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean }) {
+    async getPublishAuthorization(params: { authorizationHeader?: string; scope: string; name: string; platform: string; isPublic: boolean; dependencyKeys: string[] }) {
         return this.postOrGet('POST', '/internal/publish-authorization', {
             scope: params.scope,
             name: params.name,
             platform: params.platform,
             isPublic: params.isPublic,
+            dependencyKeys: params.dependencyKeys,
         }, params.authorizationHeader) as Promise<PublishAuthorizationFacts>;
     }
 
