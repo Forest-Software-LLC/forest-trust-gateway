@@ -21,6 +21,7 @@ import {
     hashToFilename,
     validateUefnPackage,
     makeUefnEntryInspector,
+    makeRobloxEntryInspector,
     deriveObjectEncryptionKey,
     decideDependencyVisibility,
 } from '../rules/index.ts';
@@ -177,9 +178,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         const validatePipeline = validateTgz(validatePass, {
             licenseCapture,
             // uefn gets filename rules (Verse-code-only allowlist, digest/
-            // receipt/binary rejects) + .verse capture; roblox passes no
-            // inspector and behaves exactly as before.
-            entryInspector: isUefn ? makeUefnEntryInspector(verseFiles) : undefined,
+            // receipt/binary rejects) + .verse capture; roblox gets the
+            // runtime-script reject (*.server/*.client.lua(u) — Rojo names
+            // that execute without being required).
+            entryInspector: isUefn ? makeUefnEntryInspector(verseFiles) : makeRobloxEntryInspector(),
         });
         const { sink: bufferSink, getBuffer } = createBufferingSink();
 
