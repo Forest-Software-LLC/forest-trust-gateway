@@ -252,6 +252,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
                 // uefn has no entry-point file — the folder is the package
                 // (superRefine guarantees root's presence for other platforms)
                 archiveRoot: isUefn ? '' : forestJson.root!,
+                // Custom dependency container name; absent = default
+                // `Packages` (JSON.stringify drops the undefined key, so an
+                // older backend never even sees the field).
+                packagesDir: forestJson.packagesDir,
                 compatVersion: metadata.compatVersion,
                 readme: metadata.readme,
                 description: forestJson.description,
