@@ -132,6 +132,9 @@ test('a valid package with a matching license is accepted, hashed, stored, and r
     assert.equal(client.recordedCalls[0].declaredLicense, 'MIT');
     assert.equal(client.recordedCalls[0].isPublic, true);
     assert.equal(client.recordedCalls[0].needsAiScan, false);
+    // No packagesDir in the manifest -> none recorded (absent = the default
+    // `Packages`, matching every version published before the field existed).
+    assert.equal(client.recordedCalls[0].packagesDir, undefined);
 
     // What the license means is forest-backend's call, not this gateway's —
     // but the gateway must still forward exactly what it captured from the
@@ -203,6 +206,103 @@ test('a custom dependency alias is preserved, and none is fabricated for string 
     // name, so shorthand deps are recorded alias-less.
     assert.deepEqual(deps['scope/shorthand'], { version: '^1.0.0' });
     assert.deepEqual(deps['scope/promise'], { version: '^2.0.0', alias: 'MyPromise' });
+});
+
+// ---- packagesDir (custom dependency container directory) ---------------------
+
+test('a valid custom packagesDir is accepted and forwarded on record-published-version', async () => {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor({ packagesDir: 'roblox_packages' }) },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+    assert.equal(client.recordedCalls.length, 1);
+    // The whole point of the field: the name must reach the backend, or the
+    // package installs under `Packages` while its source requires the renamed
+    // container, breaking every consumer.
+    assert.equal(client.recordedCalls[0].packagesDir, 'roblox_packages');
+});
+
+test('a traversal-style or otherwise malformed packagesDir is rejected before any backend call', async () => {
+    // Registry-supplied packagesDir values flow into consumer filesystem
+    // paths at install time, so anything that could escape or nest below the
+    // project dir must die at the schema. The letter-start rule also excludes
+    // the CLI's cleanup-exempt `_`/`.` prefixes, and 65 chars breaks the cap.
+    const badNames = ['../evil', '..', 'nested/dir', 'back\\slash', '.hidden', '_private', 'name with space', 'x:drive', 'A'.repeat(65)];
+    for (const packagesDir of badNames) {
+        const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+        const { client: s3, puts } = makeFakeS3();
+        const app = buildApp(client, s3);
+        await app.ready();
+
+        const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+        const { body, contentType } = buildMultipartBody([
+            { name: 'metadata', value: JSON.stringify({ public: true }) },
+            { name: 'forestJson', value: forestJsonFor({ packagesDir }) },
+            { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+        ]);
+
+        const res = await app.inject({
+            method: 'POST', url: '/v1/package/upload',
+            headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+            payload: body,
+        });
+
+        assert.equal(res.statusCode, 400, `expected 400 for packagesDir ${JSON.stringify(packagesDir)}`);
+        assert.match(res.json().error, /Invalid JSON format for field forestJson/);
+        assert.equal(client.publishAuthorizationCalls.length, 0, 'a malformed manifest must never reach the backend');
+        assert.equal(puts.length, 0);
+        assert.equal(client.recordedCalls.length, 0);
+    }
+});
+
+test('a Windows reserved device name as packagesDir is rejected case-insensitively', async () => {
+    // CON, PRN, AUX, NUL, COM1-9, LPT1-9 can never exist as folders on a
+    // Windows consumer's disk — a package published with one would be
+    // uninstallable there. The rejection must not over-match: CONSOLE is legal.
+    const cases: { packagesDir: string; expected: number }[] = [
+        { packagesDir: 'CON', expected: 400 },
+        { packagesDir: 'con', expected: 400 },
+        { packagesDir: 'Com5', expected: 400 },
+        { packagesDir: 'lpt9', expected: 400 },
+        { packagesDir: 'CONSOLE', expected: 200 },
+    ];
+    for (const { packagesDir, expected } of cases) {
+        const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+        const { client: s3 } = makeFakeS3();
+        const app = buildApp(client, s3);
+        await app.ready();
+
+        const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy' }, { name: 'src/init.luau', content: 'return {}' }]);
+        const { body, contentType } = buildMultipartBody([
+            { name: 'metadata', value: JSON.stringify({ public: true }) },
+            { name: 'forestJson', value: forestJsonFor({ packagesDir }) },
+            { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+        ]);
+
+        const res = await app.inject({
+            method: 'POST', url: '/v1/package/upload',
+            headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+            payload: body,
+        });
+
+        assert.equal(res.statusCode, expected, `expected ${expected} for packagesDir ${JSON.stringify(packagesDir)}`);
+    }
 });
 
 test('a rejected license verdict blocks the publish — nothing stored, before or after', async () => {
@@ -629,6 +729,37 @@ test('uefn manifest without root parses; roblox manifest without root is still r
 
     assert.equal(res.statusCode, 400);
     assert.match(res.json().error, /Invalid JSON format for field forestJson/);
+});
+
+test('uefn: packagesDir is rejected — the shared ForestPackages mount name is the platform contract', async () => {
+    // On UEFN there is ONE flat shared mount for the whole project and its
+    // name is compiled into every package's Verse source; a package authored
+    // against a renamed mount could never co-install with the rest of the
+    // registry (see docs/uefn-adapter.md section 5), so the field is
+    // roblox-only. Even a value that would be perfectly legal on roblox
+    // must fail the uefn schema parse.
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+
+    const tgz = await makeTgz([
+        { name: 'LICENSE', content: 'MIT License text' },
+        { name: 'Calc.verse', content: 'Double<public>(X:int):int = X + X\n' },
+    ]);
+    const { body, contentType } = uefnUpload(uefnForestJson({ packagesDir: 'roblox_packages' }), tgz);
+
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /Invalid JSON format for field forestJson/);
+    assert.equal(client.publishAuthorizationCalls.length, 0);
+    assert.equal(puts.length, 0);
+    assert.equal(client.recordedCalls.length, 0);
 });
 
 /*
