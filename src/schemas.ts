@@ -32,6 +32,13 @@ export const PackageMetadataSchema = z.object({
 
 const LicenseSchema = z.string().trim().min(1).max(120);
 
+// Descriptions render in web search results and embeds:
+// force single-line plain text (newlines/tabs collapse to spaces, other
+// control chars (including ANSI escapes) are dropped before the length
+// check so a description that only overflows via control chars still passes.
+const sanitizeDescription = (value: string) =>
+    value.replace(/[\r\n\t]+/g, ' ').replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim();
+
 export const ForestJsonSchema = z.object({
     name: z.string().min(1),
     author: z.string(),
@@ -44,10 +51,13 @@ export const ForestJsonSchema = z.object({
     // forward-slashed) — a raw backslash breaks extraction on mac/linux.
     root: z.string().min(1).transform((s) => s.replace(/\\/g, '/')).optional(),
     version: z.string().regex(/^\d+\.\d+\.\d+(-[\w.-]+)?(\+[\w.-]+)?$/, {
-        message: 'Version must be in format x.x.x'
+        message: 'Version must be in format x.x.x or x.x.x-<prerelease>+<build>'
     }).default('0.1.0'),
     dependencies: z.record(z.string().or(z.object({ alias: z.string().optional(), version: z.string() }))).default({}),
-    description: z.string().optional(),
+    description: z.string()
+        .transform(sanitizeDescription)
+        .pipe(z.string().max(200, 'description must be 200 characters or fewer'))
+        .optional(),
     // Presence is still enforced by the publish route's explicit check (so
     // its error message stays stable); this only constrains the VALUE.
     platform: PlatformSchema.optional(),
