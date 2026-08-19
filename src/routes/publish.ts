@@ -23,6 +23,7 @@ import {
     makeUefnEntryInspector,
     deriveObjectEncryptionKey,
     decideDependencyVisibility,
+    collectDependencyWarnings,
 } from '../rules/index.ts';
 import { PackageMetadataSchema, ForestJsonSchema } from '../schemas.ts';
 import type { ForestJson, PackageMetadata } from '../schemas.ts';
@@ -166,6 +167,9 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             return reply.status(400).send({ error: dependencyVisibility.reason });
         }
 
+        // Non-blocking: archived dependencies warn on the success response.
+        const dependencyWarnings = collectDependencyWarnings(facts.dependencies ?? []);
+
         // Validate + hash — the actual trust-critical work. Each consumer
         // gets its own fresh stream over the same already-complete buffer;
         // hashAndPipe's sink also collects into a buffer, so its returned
@@ -274,12 +278,14 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             throw err;
         }
 
-        // Roblox responses are byte-identical: warnings only appears for uefn
-        // publishes that produced any.
+        // warnings only appears when a publish produced any (uefn lexical
+        // warnings and/or archived-dependency warnings), so warning-free
+        // responses stay byte-identical.
+        const warnings = [...(uefnWarnings ?? []), ...dependencyWarnings];
         return reply.status(200).send({
             version: forestJson.version,
             hash: hashResult.hash,
-            ...(uefnWarnings ? { warnings: uefnWarnings } : {}),
+            ...(warnings.length > 0 ? { warnings } : {}),
         });
     });
 }

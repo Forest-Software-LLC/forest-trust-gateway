@@ -6,7 +6,7 @@ export { decidePackageAccess } from './accessPolicy.ts';
 export type { PackageAccessFacts, OrgMembershipRank } from './accessPolicy.ts';
 export { decidePublishPermission } from './publishPolicy.ts';
 export type { PublishPermissionFacts, PublishPermissionResult } from './publishPolicy.ts';
-export { decideDependencyVisibility } from './dependencyVisibility.ts';
+export { decideDependencyVisibility, collectDependencyWarnings } from './dependencyVisibility.ts';
 export type { DependencyVisibilityFact, DependencyVisibilityFacts, DependencyVisibilityResult } from './dependencyVisibility.ts';
 export { generateSignedUrl } from './signedUrl.ts';
 export { decodeTarballEncKey, deriveObjectEncryptionKey, TARBALL_ENC_KEY_BYTES } from './tarballEncryption.ts';

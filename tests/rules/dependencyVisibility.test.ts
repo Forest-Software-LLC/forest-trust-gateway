@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decideDependencyVisibility } from '../../src/rules/dependencyVisibility.ts';
+import { decideDependencyVisibility, collectDependencyWarnings } from '../../src/rules/dependencyVisibility.ts';
 
 const publicDep = { key: 'someone/utils', resolved: true, isPublic: true, ownedByAuthor: false };
 const ownPrivateDep = { key: 'me/secret', resolved: true, isPublic: false, ownedByAuthor: true };
@@ -67,4 +67,24 @@ test('a public package with a foreign private dependency reports the public rule
     const result = decideDependencyVisibility({ isPublic: true, dependencies: [foreignPrivateDep] });
     assert.equal(result.allowed, false);
     assert.match((result as { reason: string }).reason, /public package cannot depend on private/i);
+});
+
+test('archived dependencies warn without blocking, deterministically ordered', () => {
+    const deps = [
+        { ...publicDep, key: 'z/old', archived: true },
+        { ...publicDep, key: 'a/older', archived: true },
+        publicDep,
+    ];
+    assert.equal(decideDependencyVisibility({ isPublic: true, dependencies: deps }).allowed, true);
+    const warnings = collectDependencyWarnings(deps);
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /a\/older/);
+    assert.match(warnings[1], /z\/old/);
+    assert.match(warnings[0], /archived/i);
+});
+
+test('archived warnings ignore unresolved deps and backends that send no flag', () => {
+    assert.deepEqual(collectDependencyWarnings([publicDep, ownPrivateDep]), []);
+    assert.deepEqual(collectDependencyWarnings([{ ...unresolvedDep, archived: true }]), []);
+    assert.deepEqual(collectDependencyWarnings([]), []);
 });
