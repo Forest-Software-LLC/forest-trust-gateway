@@ -36,6 +36,7 @@ export interface DependencyVisibilityFact {
     resolved: boolean;
     isPublic: boolean;
     ownedByAuthor: boolean;
+    archived?: boolean;
 }
 
 export interface DependencyVisibilityFacts {
@@ -74,4 +75,16 @@ export function decideDependencyVisibility(facts: DependencyVisibilityFacts): De
 
 function formatKeys(deps: DependencyVisibilityFact[]): string {
     return deps.map(dep => dep.key).sort().join(', ');
+}
+
+export function collectDependencyWarnings(dependencies: DependencyVisibilityFact[]): string[] {
+    const archivedDeps = dependencies.filter(dep => dep.resolved && dep.archived === true);
+    if (archivedDeps.length === 0) {
+        return [];
+    }
+
+    // Warn instead of deny archived packages
+    return archivedDeps.map(dep =>
+        `Dependency ${dep.key} is archived and no longer maintained. It will keep installing, but consider replacing it.`
+    ).sort();
 }
