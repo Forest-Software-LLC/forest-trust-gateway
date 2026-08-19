@@ -91,6 +91,7 @@ export const deniedAccessFacts: AccessFacts = {
     licenseCaveats: null,
     licenseVerified: null,
     archiveRoot: null,
+    packagesDir: null,
     ownerType: null,
 };
 
@@ -110,5 +111,8 @@ export const publicAccessFacts: AccessFacts = {
     licenseCaveats: [],
     licenseVerified: true,
     archiveRoot: 'src/init.luau',
+    // Deliberately non-null so the access route's echo is actually exercised
+    // (a dropped field would otherwise coalesce to null and pass unnoticed).
+    packagesDir: 'roblox_packages',
     ownerType: 'user',
 };

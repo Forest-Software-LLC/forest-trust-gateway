@@ -21,6 +21,7 @@ import {
     hashToFilename,
     validateUefnPackage,
     makeUefnEntryInspector,
+    makeRobloxEntryInspector,
     deriveObjectEncryptionKey,
     decideDependencyVisibility,
     collectDependencyWarnings,
@@ -181,9 +182,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         const validatePipeline = validateTgz(validatePass, {
             licenseCapture,
             // uefn gets filename rules (Verse-code-only allowlist, digest/
-            // receipt/binary rejects) + .verse capture; roblox passes no
-            // inspector and behaves exactly as before.
-            entryInspector: isUefn ? makeUefnEntryInspector(verseFiles) : undefined,
+            // receipt/binary rejects) + .verse capture; roblox gets the
+            // runtime-script reject (*.server/*.client.lua(u) — Rojo names
+            // that execute without being required).
+            entryInspector: isUefn ? makeUefnEntryInspector(verseFiles) : makeRobloxEntryInspector(),
         });
         const { sink: bufferSink, getBuffer } = createBufferingSink();
 
@@ -254,6 +256,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
                 // uefn has no entry-point file — the folder is the package
                 // (superRefine guarantees root's presence for other platforms)
                 archiveRoot: isUefn ? '' : forestJson.root!,
+                // Custom dependency container name; absent = default
+                // `Packages` (JSON.stringify drops the undefined key, so an
+                // older backend never even sees the field).
+                packagesDir: forestJson.packagesDir,
                 compatVersion: metadata.compatVersion,
                 readme: metadata.readme,
                 description: forestJson.description,
