@@ -19,7 +19,7 @@
     "@cloudflare/containers": "^0.3.7",
     "@fastify/multipart": "^9.0.3",
     "fastify": "^5.2.2",
-    "forest-shared-resources": "github:Forest-Software-LLC/forest-shared-resources#v0.3.0",
+    "forest-shared-resources": "github:Forest-Software-LLC/forest-shared-resources#v0.4.0",
     "tar-stream": "^3.1.7",
     "zod": "^3.24.2"
   },
