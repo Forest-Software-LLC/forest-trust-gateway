@@ -60,6 +60,7 @@ test('a granted package carries through the install metadata the CLI needs, not 
     assert.deepEqual(body.licenseCaveats, publicAccessFacts.licenseCaveats);
     assert.equal(body.licenseVerified, publicAccessFacts.licenseVerified);
     assert.equal(body.archiveRoot, publicAccessFacts.archiveRoot);
+    assert.equal(body.packagesDir, publicAccessFacts.packagesDir);
     assert.equal(body.public, publicAccessFacts.isPublic);
     assert.equal(body.integrity, publicAccessFacts.hash);
     assert.equal(body.ownerType, publicAccessFacts.ownerType);
@@ -82,6 +83,7 @@ test('a private package the caller is allowed to see gets a signed URL matching 
         licenseCaveats: null,
         licenseVerified: null,
         archiveRoot: null,
+        packagesDir: null,
         ownerType: null,
     };
     const app = buildApp(privateAllowed);
@@ -113,6 +115,7 @@ test('a private package caches nothing (no-store), unlike a public one', async (
         licenseCaveats: null,
         licenseVerified: null,
         archiveRoot: null,
+        packagesDir: null,
         ownerType: null,
     };
     const app = buildApp(privateAllowed);

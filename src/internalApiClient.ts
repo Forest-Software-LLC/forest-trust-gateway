@@ -64,6 +64,10 @@ export interface AccessFacts {
     licenseCaveats: string[] | null;
     licenseVerified: boolean | null;
     archiveRoot: string | null;
+    // roblox only: the folder name this version's own dependencies install
+    // into. null (or absent, from an older backend) = the default `Packages`
+    // — which also covers every wally-mirrored version.
+    packagesDir: string | null;
     // uefn only: authored-against UEFN compatibilityVersion (display/warn)
     compatVersion?: string | null;
     ownerType: string | null;
@@ -84,6 +88,9 @@ export interface RecordPublishedVersionInput {
     version: string;
     hash: string;
     archiveRoot: string;
+    // roblox only: custom dependency container folder name (absent = the
+    // default `Packages`; the schema already rejects it on uefn publishes)
+    packagesDir?: string;
     readme?: string;
     description?: string;
     declaredLicense: string;

@@ -100,6 +100,9 @@ export function registerAccessRoute(fastify: FastifyInstance, deps: AccessRouteD
             licenseVerified: facts.licenseVerified === true,
             accessUrl,
             archiveRoot: facts.archiveRoot,
+            // The folder this version's own deps install into; null = the
+            // default `Packages`. `??` guards a backend predating the field.
+            packagesDir: facts.packagesDir ?? null,
             public: facts.isPublic,
             integrity: facts.hash,
             ownerType: facts.ownerType,

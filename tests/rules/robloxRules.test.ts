@@ -4,7 +4,12 @@ import { PassThrough } from 'node:stream';
 import { createGzip } from 'node:zlib';
 import tar from 'tar-stream';
 import { validateTgz } from '../../src/rules/validateTgz.ts';
-import { makeRobloxScanState, makeRobloxEntryInspector, validateRobloxPackage } from '../../src/rules/robloxRules.ts';
+import {
+    checkRobloxEntryName,
+    makeRobloxScanState,
+    makeRobloxEntryInspector,
+    validateRobloxPackage,
+} from '../../src/rules/robloxRules.ts';
 import { buildRbxm } from '../rbxmFixture.ts';
 
 async function createTgz(entries: { name: string, content: string | Buffer }[]) {
@@ -39,6 +44,69 @@ async function runRobloxScan(entries: { name: string, content: string | Buffer }
   await validateTgz(toStream(buf), { entryInspector: makeRobloxEntryInspector(state) });
   return { state, errors: validateRobloxPackage(state) };
 }
+
+// --- runtime-script filename rules -------------------------------------------
+
+test('rejects every runtime-script suffix variant', () => {
+    for (const name of [
+        'attack.server.lua',
+        'attack.server.luau',
+        'attack.client.lua',
+        'attack.client.luau',
+        'init.server.lua',
+        'init.client.luau',
+        'lib/nested/payload.server.luau',
+    ]) {
+        assert.match(checkRobloxEntryName(name, 'file') ?? '', /Runtime script not allowed/, name);
+    }
+});
+
+test('suffix match is case-insensitive', () => {
+    assert.match(checkRobloxEntryName('Attack.Server.Lua', 'file') ?? '', /Runtime script not allowed/);
+    assert.match(checkRobloxEntryName('attack.CLIENT.LUAU', 'file') ?? '', /Runtime script not allowed/);
+});
+
+test('allows ordinary module files', () => {
+    for (const name of [
+        'init.lua',
+        'init.luau',
+        'lib/module.lua',
+        'README.md',
+        'LICENSE',
+        'forest.json',
+        // No dot separator before server/client — ordinary ModuleScript names
+        'server.lua',
+        'client.luau',
+        'src/webserver.lua',
+    ]) {
+        assert.equal(checkRobloxEntryName(name, 'file'), null, name);
+    }
+});
+
+test('directories are exempt even with a runtime-script-shaped name', () => {
+    assert.equal(checkRobloxEntryName('weird.server.lua/', 'directory'), null);
+});
+
+test('validateTgz fails an archive containing a runtime script', async () => {
+    const buf = await createTgz([
+        { name: 'init.lua', content: 'return {}' },
+        { name: 'evil.client.luau', content: 'game.Players.LocalPlayer:Kick()' },
+    ]);
+    await assert.rejects(
+        () => validateTgz(toStream(buf), { entryInspector: makeRobloxEntryInspector(makeRobloxScanState()) }),
+        /Runtime script not allowed: evil\.client\.luau/,
+    );
+});
+
+test('validateTgz passes a module-only archive', async () => {
+    const buf = await createTgz([
+        { name: 'init.lua', content: 'return {}' },
+        { name: 'lib/util.luau', content: 'return {}' },
+    ]);
+    await validateTgz(toStream(buf), { entryInspector: makeRobloxEntryInspector(makeRobloxScanState()) });
+});
+
+// --- model files -------------------------------------------------------------
 
 test('model-free package passes untouched', async () => {
   const { state, errors } = await runRobloxScan([REAL_CODE]);

@@ -4,13 +4,21 @@
     Roblox package validation, the platform branch of the publish path's
     tarball rules.
 
-    1. Model files (.rbxm) must be code-free instance trees. The binary
+    1. No runtime scripts. Under the Rojo naming convention x.server.lua(u)
+       syncs as a Script and x.client.lua(u) as a LocalScript, both execute
+       without the package ever being require()d. Package code must be
+       ModuleScripts (plain .lua/.luau).
+
+    2. Model files (.rbxm) must be code-free instance trees. The binary
        scanner lives in forest-shared-resources/rbxm; this module wires it
        into the extraction pass and turns scan results into publish errors.
        .rbxmx not supported.
 
-    2. Code-first floor: a package shipping models must also ship
+    3. Code-first floor: a package shipping models must also ship
        non-trivial Luau source.
+
+    Native forest publishes only. The wally mirror ingests through
+    PUT /internal/mirror-tarball, which never runs validateTgz.
 */
 
 import {
@@ -22,6 +30,12 @@ import {
     MIN_LUAU_SOURCE_BYTES_WITH_MODELS,
 } from 'forest-shared-resources/rbxm';
 import type { TgzEntryInspector } from './validateTgz.ts';
+
+// Case-insensitive where Rojo's own suffix match is case-sensitive; false
+// positives over false negatives. A bare server.lua/client.lua does NOT
+// match: without the leading dot separator it's an ordinary ModuleScript
+// name.
+const RUNTIME_SCRIPT_SUFFIX_RE = /\.(server|client)\.luau?$/;
 
 export interface RobloxScanState {
     // path -> raw bytes for every .rbxm in the tarball
@@ -39,19 +53,25 @@ function extensionOf(name: string): string {
     return dot === -1 ? '' : base.slice(dot).toLowerCase();
 }
 
+export function checkRobloxEntryName(name: string, type: string | undefined): string | null {
+    if (type === 'directory') return null;
+    const base = name.split('/').filter(Boolean).pop() ?? '';
+    if (RUNTIME_SCRIPT_SUFFIX_RE.test(base.toLowerCase())) {
+        return `Runtime script not allowed: ${name} - Package code must be ModuleScripts (plain .lua/.luau).`;
+    }
+    if (REJECTED_MODEL_EXTENSIONS.includes(extensionOf(name))) {
+        return `XML model files are not supported: ${name} (re-save as binary .rbxm)`;
+    }
+    // Regular files only; a symlink named x.rbxm has no scannable content
+    if (MODEL_FILE_EXTENSIONS.includes(extensionOf(name)) && type !== undefined && type !== 'file') {
+        return `Unsupported archive entry type "${type}": ${name}`;
+    }
+    return null;
+}
+
 export function makeRobloxEntryInspector(state: RobloxScanState): TgzEntryInspector {
     return {
-        inspectName: (name, type) => {
-            if (type === 'directory') return null;
-            if (REJECTED_MODEL_EXTENSIONS.includes(extensionOf(name))) {
-                return `XML model files are not supported: ${name} (re-save as binary .rbxm)`;
-            }
-            // Regular files only; a symlink named x.rbxm has no scannable content
-            if (MODEL_FILE_EXTENSIONS.includes(extensionOf(name)) && type !== undefined && type !== 'file') {
-                return `Unsupported archive entry type "${type}": ${name}`;
-            }
-            return null;
-        },
+        inspectName: checkRobloxEntryName,
         onEntry: (name, size, type) => {
             if (type !== undefined && type !== 'file') return;
             const ext = extensionOf(name);
