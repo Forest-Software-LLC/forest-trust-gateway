@@ -25,17 +25,12 @@ import {
     scanRbxm,
     checkRbxmPolicy,
     RbxmParseError,
+    isRuntimeScriptName,
     MODEL_FILE_EXTENSIONS,
     REJECTED_MODEL_EXTENSIONS,
     MIN_LUAU_SOURCE_BYTES_WITH_MODELS,
 } from 'forest-shared-resources/rbxm';
 import type { TgzEntryInspector } from './validateTgz.ts';
-
-// Case-insensitive where Rojo's own suffix match is case-sensitive; false
-// positives over false negatives. A bare server.lua/client.lua does NOT
-// match: without the leading dot separator it's an ordinary ModuleScript
-// name.
-const RUNTIME_SCRIPT_SUFFIX_RE = /\.(server|client)\.luau?$/;
 
 export interface RobloxScanState {
     // path -> raw bytes for every .rbxm in the tarball
@@ -56,7 +51,8 @@ function extensionOf(name: string): string {
 export function checkRobloxEntryName(name: string, type: string | undefined): string | null {
     if (type === 'directory') return null;
     const base = name.split('/').filter(Boolean).pop() ?? '';
-    if (RUNTIME_SCRIPT_SUFFIX_RE.test(base.toLowerCase())) {
+    // Suffix list and matching semantics come from the shared contract
+    if (isRuntimeScriptName(base)) {
         return `Runtime script not allowed: ${name} - Package code must be ModuleScripts (plain .lua/.luau).`;
     }
     if (REJECTED_MODEL_EXTENSIONS.includes(extensionOf(name))) {
