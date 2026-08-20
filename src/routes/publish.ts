@@ -21,7 +21,9 @@ import {
     hashToFilename,
     validateUefnPackage,
     makeUefnEntryInspector,
+    makeRobloxScanState,
     makeRobloxEntryInspector,
+    validateRobloxPackage,
     deriveObjectEncryptionKey,
     decideDependencyVisibility,
     collectDependencyWarnings,
@@ -112,9 +114,12 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             return reply.status(400).send({ error: 'forestJson.platform is required' });
         }
         const isUefn = forestJson.platform === 'uefn';
+        const isRoblox = forestJson.platform === 'roblox';
         // path -> utf8 text of every .verse file, filled during validateTgz's
         // extraction pass and consumed by the uefn lexical scan below.
         const verseFiles = new Map<string, string>();
+        // .rbxm bytes + luau size tally for the roblox model-file scan below.
+        const robloxScanState = makeRobloxScanState();
 
         // Authorization check before any validation/hashing/storage work —
         // the file is already buffered in memory at this point (multipart
@@ -183,9 +188,12 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             licenseCapture,
             // uefn gets filename rules (Verse-code-only allowlist, digest/
             // receipt/binary rejects) + .verse capture; roblox gets the
-            // runtime-script reject (*.server/*.client.lua(u) — Rojo names
-            // that execute without being required).
-            entryInspector: isUefn ? makeUefnEntryInspector(verseFiles) : makeRobloxEntryInspector(),
+            // model-file rules (.rbxmx reject, .rbxm capture, luau tally).
+            entryInspector: isUefn
+                ? makeUefnEntryInspector(verseFiles)
+                : isRoblox
+                    ? makeRobloxEntryInspector(robloxScanState)
+                    : undefined,
         });
         const { sink: bufferSink, getBuffer } = createBufferingSink();
 
@@ -198,6 +206,15 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             hashResult = hashOutcome as { hash: string };
         } catch (err) {
             return reply.status(400).send({ error: `File validation failed: ${(err as Error).message}` });
+        }
+
+        // Roblox model-file scan. Fails before the license call and before
+        // anything touches R2.
+        if (isRoblox) {
+            const robloxErrors = validateRobloxPackage(robloxScanState);
+            if (robloxErrors.length > 0) {
+                return reply.status(400).send({ error: robloxErrors.join('\n') });
+            }
         }
 
         // uefn lexical scan — fail fast before the license call and long

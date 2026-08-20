@@ -1,28 +1,57 @@
 /*
     robloxRules.ts
 
-    Roblox-platform filename rules for the publish path — the roblox branch
-    of validateTgz's entry-inspector hook (uefn has its own in uefnRules.ts).
+    Roblox package validation, the platform branch of the publish path's
+    tarball rules.
 
-    The one rule: no runtime scripts. Under the Rojo naming convention a
-    file called `x.server.lua(u)` syncs into Studio as a Script and
-    `x.client.lua(u)` as a LocalScript — both EXECUTE as soon as the place
-    runs, without the package ever being require()d. That makes them a
-    drive-by code-execution vector inside an installed dependency, so
-    package code must be ModuleScripts (plain .lua/.luau) only.
+    1. No runtime scripts. Under the Rojo naming convention x.server.lua(u)
+       syncs as a Script and x.client.lua(u) as a LocalScript, both execute
+       without the package ever being require()d. Package code must be
+       ModuleScripts (plain .lua/.luau).
 
-    This gate applies to native forest publishes only. The wally mirror
-    ingests through PUT /internal/mirror-tarball, which never runs
-    validateTgz — mirrored packages are deliberately exempt.
+    2. Model files (.rbxm) must be code-free instance trees. The binary
+       scanner lives in forest-shared-resources/rbxm; this module wires it
+       into the extraction pass and turns scan results into publish errors.
+       .rbxmx not supported.
+
+    3. Code-first floor: a package shipping models must also ship
+       non-trivial Luau source.
+
+    Native forest publishes only. The wally mirror ingests through
+    PUT /internal/mirror-tarball, which never runs validateTgz.
 */
 
+import {
+    scanRbxm,
+    checkRbxmPolicy,
+    RbxmParseError,
+    MODEL_FILE_EXTENSIONS,
+    REJECTED_MODEL_EXTENSIONS,
+    MIN_LUAU_SOURCE_BYTES_WITH_MODELS,
+} from 'forest-shared-resources/rbxm';
 import type { TgzEntryInspector } from './validateTgz.ts';
 
-// Matching is case-insensitive (see the lowercase below) where Rojo's own
-// suffix match is case-sensitive — false positives over false negatives.
-// A bare `server.lua`/`client.lua` does NOT match: without the leading dot
-// separator it's an ordinary ModuleScript name.
+// Case-insensitive where Rojo's own suffix match is case-sensitive; false
+// positives over false negatives. A bare server.lua/client.lua does NOT
+// match: without the leading dot separator it's an ordinary ModuleScript
+// name.
 const RUNTIME_SCRIPT_SUFFIX_RE = /\.(server|client)\.luau?$/;
+
+export interface RobloxScanState {
+    // path -> raw bytes for every .rbxm in the tarball
+    rbxmFiles: Map<string, Buffer>;
+    luauSourceBytes: number;
+}
+
+export function makeRobloxScanState(): RobloxScanState {
+    return { rbxmFiles: new Map(), luauSourceBytes: 0 };
+}
+
+function extensionOf(name: string): string {
+    const base = name.split('/').filter(Boolean).pop() ?? '';
+    const dot = base.lastIndexOf('.');
+    return dot === -1 ? '' : base.slice(dot).toLowerCase();
+}
 
 export function checkRobloxEntryName(name: string, type: string | undefined): string | null {
     if (type === 'directory') return null;
@@ -30,9 +59,60 @@ export function checkRobloxEntryName(name: string, type: string | undefined): st
     if (RUNTIME_SCRIPT_SUFFIX_RE.test(base.toLowerCase())) {
         return `Runtime script not allowed: ${name} - Package code must be ModuleScripts (plain .lua/.luau).`;
     }
+    if (REJECTED_MODEL_EXTENSIONS.includes(extensionOf(name))) {
+        return `XML model files are not supported: ${name} (re-save as binary .rbxm)`;
+    }
+    // Regular files only; a symlink named x.rbxm has no scannable content
+    if (MODEL_FILE_EXTENSIONS.includes(extensionOf(name)) && type !== undefined && type !== 'file') {
+        return `Unsupported archive entry type "${type}": ${name}`;
+    }
     return null;
 }
 
-export function makeRobloxEntryInspector(): TgzEntryInspector {
-    return { inspectName: checkRobloxEntryName };
+export function makeRobloxEntryInspector(state: RobloxScanState): TgzEntryInspector {
+    return {
+        inspectName: checkRobloxEntryName,
+        onEntry: (name, size, type) => {
+            if (type !== undefined && type !== 'file') return;
+            const ext = extensionOf(name);
+            if (ext === '.lua' || ext === '.luau') {
+                state.luauSourceBytes += size;
+            }
+        },
+        shouldCaptureBinary: (name) => MODEL_FILE_EXTENSIONS.includes(extensionOf(name)),
+        onBinaryFile: (name, content) => {
+            state.rbxmFiles.set(name, content);
+        },
+        // Real bound is validateTgz maxTotalSize; must not truncate below it
+        maxBinaryCaptureBytes: 10 * 1024 * 1024,
+    };
+}
+
+// Post-extraction pass over captured model files. Author-facing error
+// messages; empty means pass.
+export function validateRobloxPackage(state: RobloxScanState): string[] {
+    const errors: string[] = [];
+
+    for (const [name, bytes] of state.rbxmFiles) {
+        let scan;
+        try {
+            scan = scanRbxm(bytes);
+        } catch (err) {
+            if (err instanceof RbxmParseError) {
+                errors.push(`${name}: not a valid Roblox binary model file (${err.message}).`);
+                continue;
+            }
+            throw err;
+        }
+        errors.push(...checkRbxmPolicy(scan, name));
+    }
+
+    if (state.rbxmFiles.size > 0 && state.luauSourceBytes < MIN_LUAU_SOURCE_BYTES_WITH_MODELS) {
+        errors.push(
+            'Packages that ship model files must be code-first: include meaningful Luau source, '
+            + 'not just models. forest is a package manager, not an asset store.'
+        );
+    }
+
+    return errors;
 }

@@ -10,15 +10,24 @@ import { pipeline } from 'stream/promises';
 // inspector supplied, behavior is byte-identical to before the hook existed.
 export interface TgzEntryInspector {
     inspectName?(name: string, type: string | undefined): string | null;
+    // Observer for entries passing the name/size checks. Size tallies
+    // without capturing content.
+    onEntry?(name: string, size: number, type: string | undefined): void;
     shouldCapture?(name: string): boolean;
     onFile?(name: string, content: string): void;
-    // Per-file cap for captured entries. Overflow FAILS the archive rather
+    // Binary sibling of shouldCapture/onFile for entries that must not go
+    // through a utf8 decode (e.g. .rbxm)
+    shouldCaptureBinary?(name: string): boolean;
+    onBinaryFile?(name: string, content: Buffer): void;
+    // Per-file caps for captured entries. Overflow FAILS the archive rather
     // than truncating — a truncated file could hide content past the cap
     // from the post-pass scan.
     maxCaptureBytes?: number;
+    maxBinaryCaptureBytes?: number;
 }
 
 const DEFAULT_MAX_CAPTURE_BYTES = 256 * 1024;
+const DEFAULT_MAX_BINARY_CAPTURE_BYTES = 10 * 1024 * 1024;
 
 interface TgzValidationOptions {
     maxFiles?: number;
@@ -103,6 +112,7 @@ export async function validateTgz(
                 return fail(nameError);
             }
         }
+        entryInspector?.onEntry?.(name, size || 0, header.type ?? undefined);
 
         const pathSegments = name.split('/').filter(Boolean);
         const isTopLevelLicense = pathSegments.length === 1
@@ -137,6 +147,21 @@ export async function validateTgz(
             });
             stream.on('end', () => {
                 entryInspector.onFile?.(name, Buffer.concat(chunks).toString('utf8'));
+                next();
+            });
+        } else if (entryInspector?.shouldCaptureBinary?.(name)) {
+            const cap = entryInspector.maxBinaryCaptureBytes ?? DEFAULT_MAX_BINARY_CAPTURE_BYTES;
+            const chunks: Buffer[] = [];
+            let captured = 0;
+            stream.on('data', (chunk: Buffer) => {
+                captured += chunk.length;
+                if (captured > cap) {
+                    return fail(`File too large to scan: ${name}`);
+                }
+                chunks.push(chunk);
+            });
+            stream.on('end', () => {
+                entryInspector.onBinaryFile?.(name, Buffer.concat(chunks));
                 next();
             });
         } else {

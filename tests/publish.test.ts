@@ -8,6 +8,7 @@ import multipart from '@fastify/multipart';
 import { registerPublishRoute } from '../src/routes/publish.ts';
 import { MockInternalApiClient, allowedPublishFacts, deniedPublishFacts, rejectedLicenseVerdict, deniedAccessFacts } from './mockInternalApiClient.ts';
 import { buildMultipartBody } from './multipartHelper.ts';
+import { buildRbxm } from './rbxmFixture.ts';
 
 async function makeTgz(entries: { name: string; content: string }[]): Promise<Buffer> {
     const pack = tar.pack();
@@ -981,4 +982,74 @@ test('a backend that sends no dependency facts still publishes (older-backend co
 
     assert.equal(res.statusCode, 200);
     assert.equal(puts.length, 1);
+});
+
+// --- roblox model files ------------------------------------------------------
+
+const MIT_TEXT = 'MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy';
+const REAL_LUAU = '-- real module\n' + 'local x = 1\n'.repeat(40) + 'return x\n';
+
+async function makeTgzBin(entries: { name: string; content: string | Buffer }[]): Promise<Buffer> {
+    const pack = tar.pack();
+    for (const { name, content } of entries) pack.entry({ name }, content);
+    pack.finalize();
+    const gzip = createGzip();
+    const chunks: Buffer[] = [];
+    return new Promise((resolve, reject) => {
+        pack.pipe(gzip).on('data', c => chunks.push(c)).on('end', () => resolve(Buffer.concat(chunks))).on('error', reject);
+    });
+}
+
+async function publishTgz(tgz: Buffer) {
+    const client = new MockInternalApiClient(allowedPublishFacts, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3);
+    await app.ready();
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify({ public: true }) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+    return { res, puts, client };
+}
+
+test('a roblox package with a script-bearing model file is rejected before R2 or record', async () => {
+    const tgz = await makeTgzBin([
+        { name: 'LICENSE', content: MIT_TEXT },
+        { name: 'src/init.luau', content: REAL_LUAU },
+        { name: 'assets/ui.rbxm', content: buildRbxm('LocalScript') },
+    ]);
+    const { res, puts, client } = await publishTgz(tgz);
+    assert.equal(res.statusCode, 400);
+    assert.match(JSON.parse(res.body).error, /LocalScript x1/);
+    assert.equal(puts.length, 0, 'a script-bearing model must never reach R2');
+    assert.equal(client.recordedCalls.length, 0);
+});
+
+test('a roblox package with a clean model file and real code publishes', async () => {
+    const tgz = await makeTgzBin([
+        { name: 'LICENSE', content: MIT_TEXT },
+        { name: 'src/init.luau', content: REAL_LUAU },
+        { name: 'assets/tree.rbxm', content: buildRbxm('Model') },
+    ]);
+    const { res, puts } = await publishTgz(tgz);
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+});
+
+test('a model-only roblox package trips the code floor at the route level', async () => {
+    const tgz = await makeTgzBin([
+        { name: 'LICENSE', content: MIT_TEXT },
+        { name: 'src/init.luau', content: 'return script.Model' },
+        { name: 'Model.rbxm', content: buildRbxm('Model') },
+    ]);
+    const { res, puts } = await publishTgz(tgz);
+    assert.equal(res.statusCode, 400);
+    assert.match(JSON.parse(res.body).error, /code-first/);
+    assert.equal(puts.length, 0);
 });
