@@ -61,7 +61,15 @@ export function registerAccessRoute(fastify: FastifyInstance, deps: AccessRouteD
 
         // A private package a caller can't access doesn't confirm its own
         // existence — denied and nonexistent are indistinguishable.
-        if (!allowed || !facts.hash || !facts.storagePath) {
+        // A credential the backend rejected gets 401 for both, so the
+        // client refreshes and retries.
+        if (!allowed) {
+            if (facts.credentialRejected) {
+                return reply.status(401).send({ error: 'Invalid or expired credentials' });
+            }
+            return reply.status(404).send({ error: 'Package not found' });
+        }
+        if (!facts.hash || !facts.storagePath) {
             return reply.status(404).send({ error: 'Package not found' });
         }
 

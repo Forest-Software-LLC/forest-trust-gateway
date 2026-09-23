@@ -74,6 +74,9 @@ export interface AccessFacts {
     // Canonical identity
     name?: string | null;
     scope?: string | null;
+    // A credential was sent and failed verification. Optional: an older
+    // backend sends nothing and denied reads stay 404.
+    credentialRejected?: boolean;
 }
 
 export interface DependencySpec {
