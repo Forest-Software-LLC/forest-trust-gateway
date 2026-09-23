@@ -25,6 +25,24 @@ test('a denied/nonexistent package 404s rather than revealing it exists', async 
     assert.equal(res.statusCode, 404);
 });
 
+test('a rejected credential on a denied/nonexistent package 401s so the client refreshes', async () => {
+    const app = buildApp({ ...deniedAccessFacts, credentialRejected: true });
+    const res = await app.inject({ method: 'GET', url: '/v1/package/scope/roblox/pkg/1.0.0' });
+    assert.equal(res.statusCode, 401);
+});
+
+test('a rejected credential on a private package 401s the same as a nonexistent one', async () => {
+    const app = buildApp({ ...deniedAccessFacts, hash: 'def456', storagePath: 'private/def456.tgz', resolvedVersion: '1.0.0', credentialRejected: true });
+    const res = await app.inject({ method: 'GET', url: '/v1/package/scope/roblox/pkg/1.0.0' });
+    assert.equal(res.statusCode, 401);
+});
+
+test('a rejected credential does not block a public package', async () => {
+    const app = buildApp({ ...publicAccessFacts, credentialRejected: true });
+    const res = await app.inject({ method: 'GET', url: '/v1/package/scope/roblox/pkg/1.0.0' });
+    assert.equal(res.statusCode, 200);
+});
+
 test('a public package returns an unsigned, directly-usable URL', async () => {
     const app = buildApp(publicAccessFacts);
     const res = await app.inject({ method: 'GET', url: '/v1/package/scope/roblox/pkg/1.0.0' });
