@@ -6,7 +6,7 @@ The public, independently buildable service that handles [Forest](https://forest
 
 - **Packages are content-addressed.** The SHA-256 of the uploaded tarball is the storage key and the integrity value the CLI verifies on install. The hash is computed here, by public code, from the exact bytes received.
 - **File bytes go directly from the client to this service to storage.** The private backend never has custody of package contents.
-- **Authorization rules run here.** The private backend answers narrow factual questions (membership level, existing grants, package visibility) over an internal API; this service applies the actual publish/access rules (`src/rules/publishPolicy.ts`, `src/rules/accessPolicy.ts`) against those facts.
+- **Authorization rules run here.** The private backend answers narrow factual questions (membership level, existing grants, package visibility) over an internal API; this service applies the actual publish/access rules (`src/rules/publishPolicy.ts`, `src/rules/accessPolicy.ts`) against those facts. A new version of an existing package is always stored and recorded under the package's stored visibility, never the request's flag (`src/rules/publishVisibility.ts`): downloads build the storage path from the stored visibility, and a contradicting flag is refused.
 - **License rating is not done here.** This service captures the packaged LICENSE file's text during archive validation and forwards it; the backend's verdict is enforced before anything is written to storage.
 
 This service holds credentials for exactly one thing: writing package tarballs to storage. It has no database and no access to account, billing, or any other user data beyond the facts listed above.
@@ -23,7 +23,7 @@ CI deploys this repo to that hostname, so the code answering those routes is ver
 
 ## Structure
 
-- `src/rules/` — pure decision logic and file-safety checks: `validateTgz` (archive safety + LICENSE text capture), `contentAddress`, `accessPolicy`, `publishPolicy`, `signedUrl`, `hashAndPipe`. Each has its own tests in `tests/rules/`.
+- `src/rules/`: pure decision logic and file-safety checks: `validateTgz` (archive safety + LICENSE text capture), `contentAddress`, `accessPolicy`, `publishPolicy`, `publishVisibility`, `signedUrl`, `hashAndPipe`. Each has its own tests in `tests/rules/`.
 - `src/routes/` — the two Fastify routes, thin orchestration over `src/rules/` and `internalApiClient.ts`.
 - `src/internalApiClient.ts` — the full surface of what this service asks the backend: `getPublishAuthorization`, `verifyLicense`, `recordPublishedVersion`, `getAccessFacts`.
 

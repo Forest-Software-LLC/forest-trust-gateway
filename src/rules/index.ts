@@ -8,6 +8,8 @@ export { decidePackageAccess } from './accessPolicy.ts';
 export type { PackageAccessFacts, OrgMembershipRank } from './accessPolicy.ts';
 export { decidePublishPermission } from './publishPolicy.ts';
 export type { PublishPermissionFacts, PublishPermissionResult } from './publishPolicy.ts';
+export { decidePublishVisibility } from './publishVisibility.ts';
+export type { PublishVisibilityFacts, PublishVisibilityResult } from './publishVisibility.ts';
 export { decideDependencyVisibility, collectDependencyWarnings } from './dependencyVisibility.ts';
 export type { DependencyVisibilityFact, DependencyVisibilityFacts, DependencyVisibilityResult } from './dependencyVisibility.ts';
 export { generateSignedUrl } from './signedUrl.ts';

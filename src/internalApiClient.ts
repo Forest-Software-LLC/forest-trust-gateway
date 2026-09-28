@@ -29,6 +29,9 @@ export interface PublishAuthorizationFacts {
     userId?: string;
     membershipLevel: number;
     packageAlreadyExists: boolean;
+    // Stored visibility of the existing package, for decidePublishVisibility.
+    // Absent for a new package, or from an older backend.
+    existingPackagePublic?: boolean;
     hasWriteGrant: boolean;
     // A business-rule block (free-tier member limits, publish cooldowns) —
     // deliberately not modeled as part of decidePublishPermission's facts,

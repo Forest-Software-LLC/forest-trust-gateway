@@ -1053,3 +1053,80 @@ test('a model-only roblox package trips the code floor at the route level', asyn
     assert.match(JSON.parse(res.body).error, /code-first/);
     assert.equal(puts.length, 0);
 });
+
+/*
+    Visibility of a new version of an EXISTING package. Downloads build the
+    storage path from the package's stored visibility, so the publish must
+    store (and record) under that same visibility no matter what the request
+    flag says. Rule-level cases live in tests/rules/publishVisibility.test.ts;
+    these pin the wiring through every visibility-dependent step.
+*/
+async function publishExisting(facts: Partial<typeof allowedPublishFacts> & { existingPackagePublic?: boolean }, metadata: Record<string, unknown>, tarballEncKey?: Buffer) {
+    const client = new MockInternalApiClient({ ...allowedPublishFacts, packageAlreadyExists: true, ...facts }, dummyAccessFacts);
+    const { client: s3, puts } = makeFakeS3();
+    const app = buildApp(client, s3, undefined, tarballEncKey);
+    await app.ready();
+
+    const tgz = await makeTgz([{ name: 'LICENSE', content: 'MIT License text' }, { name: 'src/init.luau', content: 'return {}' }]);
+    const { body, contentType } = buildMultipartBody([
+        { name: 'metadata', value: JSON.stringify(metadata) },
+        { name: 'forestJson', value: forestJsonFor() },
+        { name: 'file', value: tgz, filename: 'package.tgz', contentType: 'application/gzip' },
+    ]);
+    const res = await app.inject({
+        method: 'POST', url: '/v1/package/upload',
+        headers: { 'content-type': contentType, 'x-file-size': String(tgz.length), authorization: 'Bearer test' },
+        payload: body,
+    });
+    return { res, puts, client, hash: createHash('sha256').update(tgz).digest('hex') };
+}
+
+test('a public package\'s new version sent without a visibility is stored under public/, unencrypted', async () => {
+    const { res, puts, client, hash } = await publishExisting({ existingPackagePublic: true }, {}, Buffer.alloc(32, 7));
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].key, `public/${hash}.tgz`, 'downloads of a public package look under public/');
+    assert.equal(puts[0].ssecKey, undefined);
+    assert.equal(client.verifyLicenseCalls[0].isPublic, true);
+    assert.equal(client.recordedCalls[0].isPublic, true);
+});
+
+test('a private package\'s new version sent without a visibility is stored under private/, encrypted', async () => {
+    const { res, puts, client, hash } = await publishExisting({ existingPackagePublic: false }, {}, Buffer.alloc(32, 7));
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts[0].key, `private/${hash}.tgz`);
+    assert.equal(puts[0].ssecAlgorithm, 'AES256');
+    assert.equal(client.recordedCalls[0].isPublic, false);
+});
+
+test('a request contradicting the stored visibility is refused before anything is stored', async () => {
+    const { res, puts, client } = await publishExisting({ existingPackagePublic: true }, { public: false });
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /is public, and a publish never changes visibility/);
+    assert.equal(puts.length, 0);
+    assert.equal(client.verifyLicenseCalls.length, 0);
+    assert.equal(client.recordedCalls.length, 0);
+});
+
+test('a denied caller gets the permission error, never the visibility one', async () => {
+    // Decided after the permission rule, so visibility can't be probed.
+    const { res } = await publishExisting({ membershipLevel: 0, existingPackagePublic: false }, { public: true });
+
+    assert.equal(res.statusCode, 403);
+    assert.doesNotMatch(res.json().error, /visibility/);
+});
+
+test('the dependency rule judges an existing package by its stored visibility', async () => {
+    // An omitted flag must not let a public package take a private dependency.
+    const { res, puts } = await publishExisting({
+        existingPackagePublic: true,
+        dependencies: [{ key: 'me/secret', resolved: true, isPublic: false, ownedByAuthor: true }],
+    }, {});
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /public package cannot depend on private/i);
+    assert.equal(puts.length, 0);
+});
