@@ -27,6 +27,7 @@ import {
     deriveObjectEncryptionKey,
     decideDependencyVisibility,
     collectDependencyWarnings,
+    decidePublishVisibility,
 } from '../rules/index.ts';
 import { PackageMetadataSchema, ForestJsonSchema } from '../schemas.ts';
 import type { ForestJson, PackageMetadata } from '../schemas.ts';
@@ -131,6 +132,8 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             scope: forestJson.author,
             name: forestJson.name,
             platform: forestJson.platform,
+            // Requested visibility, only used to gate creating a new private
+            // package. Everything below the checks uses the decided one.
             isPublic: metadata.public === true,
             dependencyKeys: Object.keys(forestJson.dependencies),
         });
@@ -162,11 +165,24 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             return reply.status(403).send({ error: facts.blockedReason });
         }
 
+        // Stored visibility for an existing package. Decided after the
+        // permission checks so a denied caller can't probe it; every step
+        // below uses this, never the request's flag.
+        const visibility = decidePublishVisibility({
+            requestedPublic: metadata.public,
+            packageAlreadyExists: facts.packageAlreadyExists,
+            storedPublic: facts.existingPackagePublic,
+        });
+        if (!visibility.allowed) {
+            return reply.status(400).send({ error: visibility.reason });
+        }
+        const isPublic = visibility.isPublic;
+
         // Dependency visibility — a manifest problem (400), not a permissions
         // one, and checked before any validation/hashing/storage work so a
         // package that nobody could install is never written to R2.
         const dependencyVisibility = decideDependencyVisibility({
-            isPublic: metadata.public === true,
+            isPublic,
             dependencies: facts.dependencies ?? [],
         });
         if (!dependencyVisibility.allowed) {
@@ -245,7 +261,7 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
             name: forestJson.name,
             declaredLicense: forestJson.license,
             licenseText: licenseCapture.text,
-            isPublic: metadata.public === true,
+            isPublic,
         });
         if (!licenseVerdict.ok) {
             return reply.status(400).send({ error: licenseVerdict.reason });
@@ -255,10 +271,10 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
         // touch R2 at all — one direct put to the real, content-addressed
         // key. Nothing temporary, nothing to clean up if an earlier step
         // had failed.
-        const finalKey = `${metadata.public ? 'public' : 'private'}/${hashToFilename(hashResult.hash)}`;
+        const finalKey = `${isPublic ? 'public' : 'private'}/${hashToFilename(hashResult.hash)}`;
         // Private tarballs are SSE-C encrypted under a key derived from the
         // storage key itself; public ones stay plaintext.
-        const ssecKey = !metadata.public && deps.tarballEncKey
+        const ssecKey = !isPublic && deps.tarballEncKey
             ? deriveObjectEncryptionKey(deps.tarballEncKey, finalKey)
             : undefined;
         await putPackageObject(deps.s3, deps.bucketName, finalKey, getBuffer(), ssecKey);
@@ -286,7 +302,7 @@ export function registerPublishRoute(fastify: FastifyInstance, deps: PublishRout
                 licenseVerified: licenseVerdict.verified,
                 needsAiScan: licenseVerdict.needsAiScan,
                 licenseText: licenseCapture.text,
-                isPublic: metadata.public === true,
+                isPublic,
                 // Normalize string shorthand to object form.
                 dependencies: Object.fromEntries(
                     Object.entries(forestJson.dependencies).map(([k, v]) =>
